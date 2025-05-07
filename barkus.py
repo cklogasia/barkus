@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+"""
+Barkus - PDF Barcode Splitter
+
+This module processes PDF documents to detect both delivery number and customer name barcodes on each page,
+and splits the PDF into separate files based on these barcode values.
+
+Each output file is named using a combination of the delivery number and customer name barcodes found on its pages.
+All pages with the same delivery number and customer name barcodes are grouped together into a single output PDF.
+
+Main features:
+- Detects two types of barcodes (delivery number and customer name) on each page
+- Groups pages with identical barcode combinations
+- Splits the PDF into separate files based on these barcode combinations 
+- Names each output file using both barcode data values
+- Preserves original page sequence in the new PDFs
+"""
+
+import os
+import sys
+import pikepdf
+import cv2
+import numpy as np
+from pdf2image import convert_from_path
+from pyzbar.pyzbar import decode
+from collections import defaultdict
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger('barkus')
+
+# Class to handle verbosity for both console and log output
+class VerbosityHandler:
+    def __init__(self, verbose=True):
+        self.verbose = verbose
+        
+    def info(self, message):
+        logger.info(message)
+        if self.verbose:
+            print(message)
+            
+    def warning(self, message):
+        logger.warning(message)
+        if self.verbose:
+            print(f"Warning: {message}")
+    
+    def error(self, message):
+        logger.error(message)
+        print(f"Error: {message}", file=sys.stderr)
+
+def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
+    """Extract delivery number and customer name barcodes from each page of a PDF document.
+    
+    Args:
+        pdf_path (str): Path to the PDF file
+        dpi (int): DPI for rendering PDF pages (higher values may improve barcode detection)
+        verbose (bool): Whether to display progress information
+        
+    Returns:
+        dict: Dictionary mapping page numbers to barcode information containing
+              'delivery_number' and 'customer_name' keys
+    """
+    vh = VerbosityHandler(verbose)
+    page_barcodes = {}
+    
+    try:
+        # Load PDF with pikepdf
+        with pikepdf.open(pdf_path) as pdf_document:
+            total_pages = len(pdf_document.pages)
+            
+            vh.info(f"Processing {total_pages} pages for barcodes...")
+            
+            # Convert PDF to images using pdf2image
+            images = convert_from_path(pdf_path, dpi=dpi)
+            
+            for page_num, img in enumerate(images):
+                if total_pages > 10 and page_num % 5 == 0:
+                    vh.info(f"  Processing page {page_num+1}/{total_pages}...")
+                    
+                try:
+                    # Convert PIL Image to OpenCV format
+                    img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+                    
+                    # Detect barcodes
+                    detected_barcodes = decode(img_cv)
+                    
+                    if detected_barcodes:
+                        barcode_info = {
+                            'delivery_number': None,
+                            'customer_name': None
+                        }
+                        
+                        # We need to identify which barcode is which (delivery_number or customer_name)
+                        if len(detected_barcodes) >= 2:
+                            # Extract all barcode strings
+                            barcode_strings = [bc.data.decode('utf-8') for bc in detected_barcodes]
+                            
+                            # For this implementation, we assume:
+                            # - First barcode is delivery_number
+                            # - Second barcode is customer_name
+                            # In a real-world scenario, you might need a more sophisticated way
+                            # to identify which is which (by format, prefix, etc.)
+                            barcode_info['delivery_number'] = barcode_strings[0]
+                            barcode_info['customer_name'] = barcode_strings[1]
+                            
+                            vh.info(f"  Found barcodes on page {page_num+1}:")
+                            vh.info(f"    Delivery Number: {barcode_info['delivery_number']}")
+                            vh.info(f"    Customer Name: {barcode_info['customer_name']}")
+                            
+                            # If there are more than 2 barcodes, log the extras
+                            if len(detected_barcodes) > 2:
+                                extra_barcodes = barcode_strings[2:]
+                                vh.warning(f"  Additional barcodes found but not used: {', '.join(extra_barcodes)}")
+                        
+                        elif len(detected_barcodes) == 1:
+                            # Only one barcode found - log warning
+                            barcode_data = detected_barcodes[0].data.decode('utf-8')
+                            
+                            # Defaulting to delivery_number if only one barcode is found
+                            barcode_info['delivery_number'] = barcode_data
+                            
+                            vh.warning(f"  Only one barcode found on page {page_num+1}: {barcode_data}")
+                            vh.warning(f"  Expected two barcodes (delivery number and customer name)")
+                        
+                        # Store the barcode information for this page
+                        page_barcodes[page_num] = barcode_info
+                
+                except Exception as e:
+                    vh.warning(f"Error processing page {page_num+1}: {str(e)}")
+                    logger.exception(f"Exception while processing page {page_num+1}")
+                    continue
+            
+            vh.info(f"Barcode detection complete. Found barcodes on {len(page_barcodes)}/{total_pages} pages.")
+        
+    except Exception as e:
+        vh.error(f"Failed to process PDF: {str(e)}")
+        logger.exception("Exception in extract_barcodes_from_pdf")
+        raise
+    
+    return page_barcodes
+
+def group_pages_by_barcode(page_barcodes):
+    """Group page numbers by combined delivery number and customer name barcodes.
+    
+    Args:
+        page_barcodes (dict): Dictionary mapping page numbers to barcode info dictionaries
+                             with 'delivery_number' and 'customer_name' keys
+                             
+    Returns:
+        dict: Dictionary mapping (delivery_number, customer_name) tuples to lists of page numbers
+    """
+    barcode_pages = defaultdict(list)
+    
+    for page_num, barcode_info in page_barcodes.items():
+        delivery_number = barcode_info.get('delivery_number', 'UNKNOWN')
+        customer_name = barcode_info.get('customer_name', 'UNKNOWN')
+        
+        # Use a tuple of both barcode types as the key to group pages
+        barcode_key = (delivery_number, customer_name)
+        barcode_pages[barcode_key].append(page_num)
+    
+    return barcode_pages
+
+def split_pdf_by_barcodes(input_pdf_path, output_dir, dpi=300, verbose=True):
+    """Split PDF into multiple files based on barcode groups.
+    
+    Args:
+        input_pdf_path (str): Path to the input PDF file
+        output_dir (str): Directory to save split PDFs
+        dpi (int): DPI for rendering PDF pages for barcode detection
+        verbose (bool): Whether to display progress information
+        
+    Returns:
+        dict: Dictionary mapping (delivery_number, customer_name) tuples to lists of page numbers
+    """
+    vh = VerbosityHandler(verbose)
+    
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        
+        vh.info(f"Reading PDF: {input_pdf_path}")
+        
+        page_barcodes = extract_barcodes_from_pdf(input_pdf_path, dpi, verbose)
+        barcode_pages = group_pages_by_barcode(page_barcodes)
+        
+        if not barcode_pages:
+            vh.warning(f"No barcodes found in {input_pdf_path}")
+            return {}
+        
+        vh.info(f"Found {len(barcode_pages)} unique barcode combinations. Creating output PDFs...")
+        
+        # Open the source PDF with pikepdf
+        with pikepdf.open(input_pdf_path) as pdf_document:
+            
+            for barcode_tuple, page_numbers in barcode_pages.items():
+                delivery_number, customer_name = barcode_tuple
+                
+                # Create a filename that incorporates both delivery number and customer name
+                safe_delivery = "".join(c if c.isalnum() else "_" for c in str(delivery_number))
+                safe_customer = "".join(c if c.isalnum() else "_" for c in str(customer_name))
+                
+                # Use both values in filename if both are available
+                if delivery_number != 'UNKNOWN' and customer_name != 'UNKNOWN':
+                    filename = f"{safe_delivery}_{safe_customer}.pdf"
+                elif delivery_number != 'UNKNOWN':
+                    filename = f"{safe_delivery}.pdf"
+                elif customer_name != 'UNKNOWN':
+                    filename = f"{safe_customer}.pdf"
+                else:
+                    filename = "unknown_barcode.pdf"
+                    
+                output_path = os.path.join(output_dir, filename)
+                
+                # Log which barcode values we're using
+                barcode_info = f"Delivery: {delivery_number}"
+                if customer_name != 'UNKNOWN':
+                    barcode_info += f", Customer: {customer_name}"
+                
+                vh.info(f"  Creating PDF with {len(page_numbers)} pages: {output_path}")
+                vh.info(f"    Barcode info: {barcode_info}")
+                
+                try:
+                    # Create a new PDF
+                    new_pdf = pikepdf.Pdf.new()
+                    sorted_pages = sorted(page_numbers)
+                    
+                    # Copy pages from source to destination PDF
+                    for page_num in sorted_pages:
+                        new_pdf.pages.append(pdf_document.pages[page_num])
+                    
+                    # Save the new PDF
+                    new_pdf.save(output_path)
+                    logger.debug(f"Successfully created {output_path}")
+                except Exception as e:
+                    vh.error(f"Failed to create PDF for barcodes {barcode_tuple}: {str(e)}")
+                    logger.exception(f"Exception creating PDF for barcodes {barcode_tuple}")
+        
+        vh.info(f"PDF splitting complete. Created {len(barcode_pages)} files in {output_dir}")
+        
+    except Exception as e:
+        vh.error(f"Error splitting PDF: {str(e)}")
+        logger.exception("Exception in split_pdf_by_barcodes")
+        raise
+    
+    return barcode_pages
+
+def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ignore", dpi=300, verbose=True):
+    """Main processing function.
+    
+    Args:
+        input_pdf_path (str): Path to the input PDF file
+        output_directory (str): Directory to save split PDFs
+        handle_no_barcode (str): How to handle pages without barcodes:
+                                 - "ignore": Skip pages without barcodes (default)
+                                 - "separate": Create a separate PDF for pages without barcodes
+                                 - "keep_with_previous": Include pages with the previous barcode group
+        dpi (int): DPI for rendering PDF pages for barcode detection
+        verbose (bool): Whether to display progress information
+    """
+    vh = VerbosityHandler(verbose)
+    
+    if not os.path.exists(input_pdf_path):
+        return {"error": f"Input file not found: {input_pdf_path}"}
+    
+    try:
+        results = split_pdf_by_barcodes(input_pdf_path, output_directory, dpi, verbose)
+        
+        # Optionally handle pages without barcodes
+        with pikepdf.open(input_pdf_path) as pdf_document:
+            total_pages = len(pdf_document.pages)
+            no_barcode_pages = []
+            
+            # Find pages without barcodes
+            for page_num in range(total_pages):
+                found = False
+                for pages in results.values():
+                    if page_num in pages:
+                        found = True
+                        break
+                
+                if not found:
+                    no_barcode_pages.append(page_num)
+            
+            if no_barcode_pages:
+                vh.info(f"Found {len(no_barcode_pages)} pages without barcodes.")
+            
+            # Handle pages without barcodes based on the specified option
+            if no_barcode_pages and handle_no_barcode != "ignore":
+                if handle_no_barcode == "separate":
+                    # Create a separate PDF for pages without barcodes
+                    output_path = os.path.join(output_directory, "no_barcode.pdf")
+                    vh.info(f"Creating separate PDF for pages without barcodes: {output_path}")
+                    
+                    try:
+                        # Create a new PDF
+                        new_pdf = pikepdf.Pdf.new()
+                        
+                        # Copy pages from source to destination PDF
+                        for page_num in sorted(no_barcode_pages):
+                            new_pdf.pages.append(pdf_document.pages[page_num])
+                        
+                        # Save the new PDF
+                        new_pdf.save(output_path)
+                        results[("NO_BARCODE", "NO_BARCODE")] = no_barcode_pages
+                        vh.info(f"  Created no_barcode.pdf with {len(no_barcode_pages)} pages")
+                    except Exception as e:
+                        vh.error(f"Failed to create PDF for pages without barcodes: {str(e)}")
+                        logger.exception("Exception creating PDF for pages without barcodes")
+                    
+                elif handle_no_barcode == "keep_with_previous":
+                    # Assign pages without barcodes to the previous barcode group
+                    vh.info("Keeping pages without barcodes with previous barcode group")
+                    prev_barcode_tuple = None
+                    all_pages = sorted(list(range(total_pages)))
+                    reassignments = {}  # Track reassignments for logging
+                    
+                    for page_num in all_pages:
+                        # Find which barcode this page belongs to, if any
+                        current_barcode_tuple = None
+                        for barcode_tuple, pages in results.items():
+                            if page_num in pages:
+                                current_barcode_tuple = barcode_tuple
+                                prev_barcode_tuple = barcode_tuple
+                                break
+                        
+                        # If no barcode and we have a previous barcode, add to that group
+                        if current_barcode_tuple is None and prev_barcode_tuple is not None and page_num in no_barcode_pages:
+                            results[prev_barcode_tuple].append(page_num)
+                            if prev_barcode_tuple not in reassignments:
+                                reassignments[prev_barcode_tuple] = []
+                            reassignments[prev_barcode_tuple].append(page_num)
+                    
+                    # Log reassignments
+                    for barcode_tuple, pages in reassignments.items():
+                        delivery_num, customer_name = barcode_tuple
+                        barcode_info = f"Delivery: {delivery_num}"
+                        if customer_name != 'UNKNOWN':
+                            barcode_info += f", Customer: {customer_name}"
+                        vh.info(f"  Reassigned {len(pages)} pages to barcodes '{barcode_info}'")
+                            
+                    # Recreate PDFs with updated page assignments
+                    for barcode_tuple, page_numbers in results.items():
+                        if barcode_tuple == ("NO_BARCODE", "NO_BARCODE"):
+                            continue
+                            
+                        delivery_number, customer_name = barcode_tuple
+                        
+                        # Create filename from barcode values
+                        safe_delivery = "".join(c if c.isalnum() else "_" for c in str(delivery_number))
+                        safe_customer = "".join(c if c.isalnum() else "_" for c in str(customer_name))
+                        
+                        # Use both values in filename if both are available
+                        if delivery_number != 'UNKNOWN' and customer_name != 'UNKNOWN':
+                            filename = f"{safe_delivery}_{safe_customer}.pdf"
+                        elif delivery_number != 'UNKNOWN':
+                            filename = f"{safe_delivery}.pdf"
+                        elif customer_name != 'UNKNOWN':
+                            filename = f"{safe_customer}.pdf"
+                        else:
+                            filename = "unknown_barcode.pdf"
+                        
+                        output_path = os.path.join(output_directory, filename)
+                        
+                        # Log which barcode values we're using
+                        barcode_info = f"Delivery: {delivery_number}"
+                        if customer_name != 'UNKNOWN':
+                            barcode_info += f", Customer: {customer_name}"
+                        
+                        try:
+                            vh.info(f"  Recreating PDF with updated pages: {output_path}")
+                            vh.info(f"    Barcode info: {barcode_info}")
+                            
+                            # Create a new PDF
+                            new_pdf = pikepdf.Pdf.new()
+                            sorted_pages = sorted(page_numbers)
+                            
+                            # Copy pages from source to destination PDF
+                            for page_num in sorted_pages:
+                                new_pdf.pages.append(pdf_document.pages[page_num])
+                            
+                            # Save the new PDF
+                            new_pdf.save(output_path)
+                        except Exception as e:
+                            vh.error(f"Failed to update PDF for barcodes {barcode_tuple}: {str(e)}")
+                            logger.exception(f"Exception updating PDF for barcodes {barcode_tuple}")
+        
+        # Prepare results in a format suitable for return
+        processed_results = {}
+        for barcode_tuple, pages in results.items():
+            delivery_number, customer_name = barcode_tuple
+            key = f"{delivery_number}_{customer_name}"
+            
+            processed_results[key] = {
+                "delivery_number": delivery_number,
+                "customer_name": customer_name,
+                "pages": pages
+            }
+        
+        return {
+            "input_file": input_pdf_path,
+            "output_directory": output_directory,
+            "barcode_count": len(results),
+            "no_barcode_pages": len(no_barcode_pages),
+            "results": processed_results
+        }
+    except Exception as e:
+        logger.exception("Exception in process_pdf")
+        return {"error": str(e)}
+
+def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Split PDF by delivery number and customer name barcodes")
+    parser.add_argument("input_pdf", help="Path to input PDF file")
+    parser.add_argument("--output-dir", "-o", default="output", help="Output directory")
+    parser.add_argument("--dpi", type=int, default=300, help="DPI for barcode detection")
+    parser.add_argument("--handle-no-barcode", choices=["ignore", "separate", "keep_with_previous"],
+                      default="ignore", help="How to handle pages without barcodes")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Suppress progress output")
+    parser.add_argument("--log-file", default=None, help="Path to log file (default: no log file)")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    args = parser.parse_args()
+    
+    # Configure logging based on command-line options
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+    
+    if args.log_file:
+        file_handler = logging.FileHandler(args.log_file)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(file_handler)
+    
+    verbose = not args.quiet
+    
+    vh = VerbosityHandler(verbose)
+    
+    try:
+        results = process_pdf(args.input_pdf, args.output_dir, args.handle_no_barcode, args.dpi, verbose)
+        
+        if "error" in results:
+            vh.error(results["error"])
+            return 1
+        
+        if not args.quiet:
+            print(f"\nSplit PDF into {results['barcode_count']} files in {results['output_directory']}")
+            print(f"Each file is named using the delivery number and customer name from barcodes")
+            
+            if "no_barcode_pages" in results and results["no_barcode_pages"] > 0:
+                print(f"Found {results['no_barcode_pages']} pages without both required barcodes")
+                if args.handle_no_barcode == "separate":
+                    print("These pages were saved to no_barcode.pdf")
+                elif args.handle_no_barcode == "keep_with_previous":
+                    print("These pages were included with their preceding barcode groups")
+                else:
+                    print("These pages were ignored (not included in any output file)")
+                    
+        logger.info(f"Successfully processed {args.input_pdf} into {results['barcode_count']} files")
+        return 0
+        
+    except Exception as e:
+        vh.error(f"An error occurred: {str(e)}")
+        logger.exception("Unhandled exception in main")
+        return 1
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

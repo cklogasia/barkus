@@ -1,0 +1,9 @@
+pikepdf>=9.0.0
+pdf2image>=1.16.0
+opencv-python==4.8.1.78
+pyzbar==0.1.9
+numpy>=1.22.0
+# Test dependencies
+reportlab==4.0.9
+qrcode==7.4.2
+Pillow>=10.0.0
