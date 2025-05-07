@@ -100,13 +100,13 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
                             # Extract all barcode strings
                             barcode_strings = [bc.data.decode('utf-8') for bc in detected_barcodes]
                             
-                            # For this implementation, we assume:
+                            # For this implementation, we need to correctly identify:
                             # - First barcode is delivery_number
                             # - Second barcode is customer_name
                             # In a real-world scenario, you might need a more sophisticated way
                             # to identify which is which (by format, prefix, etc.)
-                            barcode_info['delivery_number'] = barcode_strings[0]
-                            barcode_info['customer_name'] = barcode_strings[1]
+                            barcode_info['customer_name'] = barcode_strings[0]
+                            barcode_info['delivery_number'] = barcode_strings[1]
                             
                             vh.info(f"  Found barcodes on page {page_num+1}:")
                             vh.info(f"    Delivery Number: {barcode_info['delivery_number']}")
@@ -200,13 +200,17 @@ def split_pdf_by_barcodes(input_pdf_path, output_dir, dpi=300, verbose=True):
             for barcode_tuple, page_numbers in barcode_pages.items():
                 delivery_number, customer_name = barcode_tuple
                 
-                # Create a filename that incorporates both delivery number and customer name
-                safe_delivery = "".join(c if c.isalnum() else "_" for c in str(delivery_number))
-                safe_customer = "".join(c if c.isalnum() else "_" for c in str(customer_name))
+                # Create a filename that incorporates both customer name and delivery number
+                # Only replace characters that cause issues on Windows filesystems
+                # Windows disallows: < > : " / \ | ? *
+                invalid_chars = '<>:"/\\|?*'
+                safe_delivery = ''.join('_' if c in invalid_chars else c for c in str(delivery_number))
+                safe_customer = ''.join('_' if c in invalid_chars else c for c in str(customer_name))
                 
                 # Use both values in filename if both are available
+                # Put customer name first, then delivery number in the filename
                 if delivery_number != 'UNKNOWN' and customer_name != 'UNKNOWN':
-                    filename = f"{safe_delivery}_{safe_customer}.pdf"
+                    filename = f"{safe_customer}_{safe_delivery}.pdf"
                 elif delivery_number != 'UNKNOWN':
                     filename = f"{safe_delivery}.pdf"
                 elif customer_name != 'UNKNOWN':
@@ -350,13 +354,17 @@ def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ig
                             
                         delivery_number, customer_name = barcode_tuple
                         
-                        # Create filename from barcode values
-                        safe_delivery = "".join(c if c.isalnum() else "_" for c in str(delivery_number))
-                        safe_customer = "".join(c if c.isalnum() else "_" for c in str(customer_name))
+                        # Create a filename that incorporates both customer name and delivery number
+                        # Only replace characters that cause issues on Windows filesystems
+                        # Windows disallows: < > : " / \ | ? *
+                        invalid_chars = '<>:"/\\|?*'
+                        safe_delivery = ''.join('_' if c in invalid_chars else c for c in str(delivery_number))
+                        safe_customer = ''.join('_' if c in invalid_chars else c for c in str(customer_name))
                         
                         # Use both values in filename if both are available
+                        # Put customer name first, then delivery number in the filename
                         if delivery_number != 'UNKNOWN' and customer_name != 'UNKNOWN':
-                            filename = f"{safe_delivery}_{safe_customer}.pdf"
+                            filename = f"{safe_customer}_{safe_delivery}.pdf"
                         elif delivery_number != 'UNKNOWN':
                             filename = f"{safe_delivery}.pdf"
                         elif customer_name != 'UNKNOWN':
