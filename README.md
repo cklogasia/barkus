@@ -16,17 +16,42 @@ A Python utility that analyzes PDF documents to detect delivery number and custo
 pip install -r requirements.txt
 ```
 
+## Dependencies
+
+- **Core Dependencies**:
+  - pikepdf>=9.0.0 - For PDF manipulation
+  - pdf2image>=1.16.0 - For converting PDF to images
+  - opencv-python==4.8.1.78 - For image processing
+  - pyzbar==0.1.9 - For barcode detection
+  - numpy>=1.22.0 - For numerical operations
+
+- **Test Dependencies**:
+  - reportlab==4.0.9 - For creating test PDFs
+  - qrcode==7.4.2 - For generating QR codes in test PDFs
+  - Pillow>=10.0.0 - For image handling in tests
+
 ## System Requirements
 
 - Python 3.7+
-- For zbar library (pyzbar dependency):
-  - On Ubuntu/Debian: `sudo apt-get install libzbar0`
-  - On macOS: `brew install zbar`
-  - On Windows: No additional steps required (binary included with pyzbar)
-- For pdf2image (Poppler dependency):
-  - On Ubuntu/Debian: `sudo apt-get install poppler-utils`
-  - On macOS: `brew install poppler`
-  - On Windows: Download from [poppler-windows](https://github.com/oschwartz10612/poppler-windows/) and add to PATH
+- A bash shell (PowerShell is not supported). For Windows, please use WSL2 with either Ubuntu or Fedora.
+
+This script uses an older version of NumPy which may not be compatible with the latest Python (3.13 as time of writing). Ensure that the appropriate python build dependencies are available on your system.
+
+For Fedora/Red Hat:
+```bash
+sudo dnf install gcc python3-devel redhat-rpm-config
+```
+
+For Ubuntu/Debian
+```bash
+sudo apt update
+sudo apt install build-essential python3-dev python3-pip python3-setuptools
+```
+
+For MacOS
+```bash
+xcode-select --install
+```
 
 ## Usage
 
@@ -99,3 +124,13 @@ After generating the test data, you can run:
 ```bash
 python barkus.py test_data/test_barcodes.pdf --output-dir test_output
 ```
+
+## Testing the Installation
+
+To verify that all required dependencies are properly installed and working:
+
+```bash
+python test_pikepdf.py
+```
+
+This will test the core PDF manipulation functionality using the pikepdf and pdf2image libraries.
