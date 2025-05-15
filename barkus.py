@@ -99,33 +99,75 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
                         if len(detected_barcodes) >= 2:
                             # Extract all barcode strings
                             barcode_strings = [bc.data.decode('utf-8') for bc in detected_barcodes]
-                            
-                            # For this implementation, we need to correctly identify:
-                            # - First barcode is delivery_number
-                            # - Second barcode is customer_name
-                            # In a real-world scenario, you might need a more sophisticated way
-                            # to identify which is which (by format, prefix, etc.)
-                            barcode_info['customer_name'] = barcode_strings[0]
-                            barcode_info['delivery_number'] = barcode_strings[1]
-                            
+
+                            # Identify which barcode is on the left (customer_name) and which is on the right (delivery_number)
+                            # Sort barcodes by horizontal position (x-coordinate)
+                            # Only consider barcodes that are significantly different in horizontal position
+                            left_barcodes = []
+                            right_barcodes = []
+
+                            # First pass: detect range of horizontal positions
+                            x_positions = [bc.rect.left for bc in detected_barcodes]
+                            min_x = min(x_positions)
+                            max_x = max(x_positions)
+                            x_range = max_x - min_x
+
+                            # Use 40% of the range as a threshold to distinguish left vs right
+                            # This handles cases where there might be multiple barcodes on one side
+                            threshold = min_x + (x_range * 0.4)
+
+                            for bc in detected_barcodes:
+                                if bc.rect.left < threshold:
+                                    left_barcodes.append(bc)
+                                else:
+                                    right_barcodes.append(bc)
+
+                            # Validation
+                            if not left_barcodes:
+                                vh.warning(f"No left-side (customer name) barcodes found on page {page_num+1}")
+                            elif not right_barcodes:
+                                vh.warning(f"No right-side (delivery order) barcodes found on page {page_num+1}")
+
+                            # Take the first barcode from each side
+                            if left_barcodes:
+                                barcode_info['customer_name'] = left_barcodes[0].data.decode('utf-8')
+                                if len(left_barcodes) > 1:
+                                    extra_left = [bc.data.decode('utf-8') for bc in left_barcodes[1:]]
+                                    vh.warning(f"  Multiple left-side barcodes found, using first one: {barcode_info['customer_name']}")
+                                    vh.warning(f"  Unused left-side barcodes: {', '.join(extra_left)}")
+
+                            if right_barcodes:
+                                barcode_info['delivery_number'] = right_barcodes[0].data.decode('utf-8')
+                                if len(right_barcodes) > 1:
+                                    extra_right = [bc.data.decode('utf-8') for bc in right_barcodes[1:]]
+                                    vh.warning(f"  Multiple right-side barcodes found, using first one: {barcode_info['delivery_number']}")
+                                    vh.warning(f"  Unused right-side barcodes: {', '.join(extra_right)}")
+
                             vh.info(f"  Found barcodes on page {page_num+1}:")
-                            vh.info(f"    Delivery Number: {barcode_info['delivery_number']}")
-                            vh.info(f"    Customer Name: {barcode_info['customer_name']}")
-                            
-                            # If there are more than 2 barcodes, log the extras
-                            if len(detected_barcodes) > 2:
-                                extra_barcodes = barcode_strings[2:]
-                                vh.warning(f"  Additional barcodes found but not used: {', '.join(extra_barcodes)}")
+                            vh.info(f"    Customer Name (left): {barcode_info.get('customer_name', 'UNKNOWN')}")
+                            vh.info(f"    Delivery Number (right): {barcode_info.get('delivery_number', 'UNKNOWN')}")
                         
                         elif len(detected_barcodes) == 1:
-                            # Only one barcode found - log warning
+                            # Only one barcode found - determine if it's on the left or right side
                             barcode_data = detected_barcodes[0].data.decode('utf-8')
-                            
-                            # Defaulting to delivery_number if only one barcode is found
-                            barcode_info['delivery_number'] = barcode_data
-                            
-                            vh.warning(f"  Only one barcode found on page {page_num+1}: {barcode_data}")
-                            vh.warning(f"  Expected two barcodes (delivery number and customer name)")
+                            bc = detected_barcodes[0]
+
+                            # Check the position relative to the page width to decide if it's left or right
+                            # Get image width
+                            img_width = img_cv.shape[1]
+
+                            # If barcode is in the left half of the page, it's customer name
+                            if bc.rect.left < (img_width / 2):
+                                barcode_info['customer_name'] = barcode_data
+                                vh.warning(f"  Only one barcode found on page {page_num+1} (left side): {barcode_data}")
+                                vh.warning(f"  Treating as Customer Name. No Delivery Number found.")
+                            else:
+                                # Right side barcode is delivery number
+                                barcode_info['delivery_number'] = barcode_data
+                                vh.warning(f"  Only one barcode found on page {page_num+1} (right side): {barcode_data}")
+                                vh.warning(f"  Treating as Delivery Number. No Customer Name found.")
+
+                            vh.warning(f"  Expected two barcodes (customer name on left, delivery number on right)")
                         
                         # Store the barcode information for this page
                         page_barcodes[page_num] = barcode_info
