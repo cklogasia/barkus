@@ -1,5 +1,8 @@
 # Barkus - Splits collated PDF DOs into individual DOs via barcode
 
+## Version 0.1.2 - 21 May 2025
+- @mingxxv implemented blank page handling functionality
+
 ## Version 0.1.1 - 15 May 2025
 - @mingxxv fixed customer name and DO number recognition implemented correctly
 
