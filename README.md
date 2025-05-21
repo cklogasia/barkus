@@ -68,6 +68,7 @@ python barkus.py input.pdf --output-dir output
   - `ignore`: Skip pages without barcodes
   - `separate`: Create a separate PDF for pages without barcodes
   - `keep_with_previous`: Include pages with the previous barcode group
+  - `sequential`: Include pages with no barcode with the last detected barcode until a new barcode is found
 - `--quiet`, `-q`: Suppress progress output
 - `--log-file`: Path to log file (default: no log file)
 - `--debug`: Enable debug logging (more verbose)
@@ -99,6 +100,23 @@ This will:
 3. Create a new PDF for each unique combination of delivery number and customer name
 4. Create an additional PDF called "no_barcode.pdf" containing all pages that don't have both required barcodes
 5. Save all PDFs to the split_invoices directory
+
+### Sequential Processing of Pages Without Barcodes
+
+```bash
+python barkus.py invoice.pdf --output-dir split_invoices --handle-no-barcode sequential
+```
+
+This will:
+1. Read invoice.pdf
+2. Detect delivery number and customer name barcodes on each page
+3. Process pages sequentially from beginning to end
+4. For pages with barcodes, track the most recently seen barcode
+5. For pages without barcodes, include them with the most recently seen barcode group
+6. Start a new group only when a new barcode is detected
+7. Save all PDFs to the split_invoices directory
+
+This mode is particularly useful for multi-page documents where some pages naturally belong with the preceding barcode page (like continuation pages or detailed information related to the barcode page).
 
 ### Using Logging
 

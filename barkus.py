@@ -305,6 +305,7 @@ def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ig
                                  - "ignore": Skip pages without barcodes (default)
                                  - "separate": Create a separate PDF for pages without barcodes
                                  - "keep_with_previous": Include pages with the previous barcode group
+                                 - "sequential": Include pages with no barcode with the last detected barcode until a new barcode is found
         dpi (int): DPI for rendering PDF pages for barcode detection
         verbose (bool): Whether to display progress information
     """
@@ -388,6 +389,43 @@ def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ig
                         if customer_name != 'UNKNOWN':
                             barcode_info += f", Customer: {customer_name}"
                         vh.info(f"  Reassigned {len(pages)} pages to barcodes '{barcode_info}'")
+                
+                elif handle_no_barcode == "sequential":
+                    # Sequentially group pages - pages with no barcode belong to the last seen barcode
+                    # until a new barcode is encountered
+                    vh.info("Using sequential mode: pages with no barcode will be included with the last seen barcode")
+                    
+                    # Sort pages by their original order in the document
+                    all_pages = list(range(total_pages))
+                    
+                    # Create a mapping of page number to barcode tuple
+                    page_to_barcode = {}
+                    for barcode_tuple, pages in results.items():
+                        for page_num in pages:
+                            page_to_barcode[page_num] = barcode_tuple
+                    
+                    # Process pages sequentially
+                    current_barcode = None
+                    reassignments = {}  # Track reassignments for logging
+                    
+                    for page_num in all_pages:
+                        # If this page has a barcode, update the current barcode
+                        if page_num in page_to_barcode:
+                            current_barcode = page_to_barcode[page_num]
+                        # If this page has no barcode but we have a current barcode, assign it to that group
+                        elif current_barcode is not None and page_num in no_barcode_pages:
+                            results[current_barcode].append(page_num)
+                            if current_barcode not in reassignments:
+                                reassignments[current_barcode] = []
+                            reassignments[current_barcode].append(page_num)
+                    
+                    # Log reassignments
+                    for barcode_tuple, pages in reassignments.items():
+                        delivery_num, customer_name = barcode_tuple
+                        barcode_info = f"Delivery: {delivery_num}"
+                        if customer_name != 'UNKNOWN':
+                            barcode_info += f", Customer: {customer_name}"
+                        vh.info(f"  Sequentially assigned {len(pages)} pages to barcodes '{barcode_info}'")
                             
                     # Recreate PDFs with updated page assignments
                     for barcode_tuple, page_numbers in results.items():
@@ -469,7 +507,7 @@ def main():
     parser.add_argument("input_pdf", help="Path to input PDF file")
     parser.add_argument("--output-dir", "-o", default="output", help="Output directory")
     parser.add_argument("--dpi", type=int, default=300, help="DPI for barcode detection")
-    parser.add_argument("--handle-no-barcode", choices=["ignore", "separate", "keep_with_previous"],
+    parser.add_argument("--handle-no-barcode", choices=["ignore", "separate", "keep_with_previous", "sequential"],
                       default="ignore", help="How to handle pages without barcodes")
     parser.add_argument("--quiet", "-q", action="store_true", help="Suppress progress output")
     parser.add_argument("--log-file", default=None, help="Path to log file (default: no log file)")
