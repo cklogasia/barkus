@@ -9,6 +9,7 @@ A Python utility that analyzes PDF documents to detect delivery number and custo
 - Splits the PDF into separate files based on these barcode combinations
 - Names each output file using both barcode values (delivery number and customer name)
 - Preserves original page sequence in the new PDFs
+- **Generates CSV log files** with detailed extraction information for each run
 
 ## Installation
 
@@ -152,3 +153,38 @@ python test_pikepdf.py
 ```
 
 This will test the core PDF manipulation functionality using the pikepdf and pdf2image libraries.
+
+## CSV Logging
+
+Starting from this version, Barkus automatically generates a CSV log file after each PDF processing run. The CSV file contains detailed information about each extracted PDF file.
+
+### CSV File Format
+
+The CSV log file is saved in the output directory with the filename format: `extraction_log_YYYYMMDD_HHMMSS.csv`
+
+The CSV contains the following columns:
+
+| Column | Description |
+|--------|-------------|
+| `SequenceNo` | Sequential number for each extracted PDF (1, 2, 3, etc.) |
+| `DateTime` | Date and time when the processing was performed (format: YYYYMMDD HHMMSS) |
+| `Barcode1` | Customer name barcode (left-side barcode) |
+| `Barcode2` | Delivery number barcode (right-side barcode) |
+| `OutputPath` | Full path to the extracted PDF file |
+
+### CSV Example
+
+```csv
+SequenceNo,DateTime,Barcode1,Barcode2,OutputPath
+1,20250528 143025,AJC,DO250500001,/home/user/output/AJC_DO250500001.pdf
+2,20250528 143025,CPS,86474,/home/user/output/CPS_86474.pdf
+3,20250528 143025,RTG,103338,/home/user/output/RTG_103338.pdf
+4,20250528 143025,SL,25698,/home/user/output/SL_25698.pdf
+```
+
+### Notes
+
+- The CSV log is automatically generated for every successful run
+- If a page has missing barcodes, the corresponding CSV fields will be empty
+- The CSV file uses UTF-8 encoding to support special characters in barcode data
+- Each run creates a new CSV file with a unique timestamp to prevent overwrites

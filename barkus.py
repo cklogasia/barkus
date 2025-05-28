@@ -25,6 +25,8 @@ from pdf2image import convert_from_path
 from pyzbar.pyzbar import decode
 from collections import defaultdict
 import logging
+import csv
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -218,7 +220,9 @@ def split_pdf_by_barcodes(input_pdf_path, output_dir, dpi=300, verbose=True):
         verbose (bool): Whether to display progress information
         
     Returns:
-        dict: Dictionary mapping (delivery_number, customer_name) tuples to lists of page numbers
+        tuple: (barcode_pages dict, extraction_details list)
+               barcode_pages: Dictionary mapping (delivery_number, customer_name) tuples to lists of page numbers
+               extraction_details: List of dicts with CSV data for each created PDF
     """
     vh = VerbosityHandler(verbose)
     
@@ -232,9 +236,13 @@ def split_pdf_by_barcodes(input_pdf_path, output_dir, dpi=300, verbose=True):
         
         if not barcode_pages:
             vh.warning(f"No barcodes found in {input_pdf_path}")
-            return {}
+            return {}, []
         
         vh.info(f"Found {len(barcode_pages)} unique barcode combinations. Creating output PDFs...")
+        
+        extraction_details = []
+        sequence_no = 1
+        current_datetime = datetime.now().strftime('%Y%m%d %H%M%S')
         
         # Open the source PDF with pikepdf
         with pikepdf.open(input_pdf_path) as pdf_document:
@@ -282,6 +290,17 @@ def split_pdf_by_barcodes(input_pdf_path, output_dir, dpi=300, verbose=True):
                     # Save the new PDF
                     new_pdf.save(output_path)
                     logger.debug(f"Successfully created {output_path}")
+                    
+                    # Add extraction details for CSV log
+                    extraction_details.append({
+                        'SequenceNo': sequence_no,
+                        'DateTime': current_datetime,
+                        'Barcode1': customer_name if customer_name != 'UNKNOWN' else '',
+                        'Barcode2': delivery_number if delivery_number != 'UNKNOWN' else '',
+                        'OutputPath': output_path
+                    })
+                    sequence_no += 1
+                    
                 except Exception as e:
                     vh.error(f"Failed to create PDF for barcodes {barcode_tuple}: {str(e)}")
                     logger.exception(f"Exception creating PDF for barcodes {barcode_tuple}")
@@ -293,7 +312,37 @@ def split_pdf_by_barcodes(input_pdf_path, output_dir, dpi=300, verbose=True):
         logger.exception("Exception in split_pdf_by_barcodes")
         raise
     
-    return barcode_pages
+    return barcode_pages, extraction_details
+
+def write_csv_log(output_directory, extraction_data, verbose=True):
+    """Write CSV log file with extraction details.
+    
+    Args:
+        output_directory (str): Directory where CSV log will be saved
+        extraction_data (list): List of dictionaries containing extraction details
+        verbose (bool): Whether to display progress information
+    """
+    vh = VerbosityHandler(verbose)
+    
+    csv_filename = os.path.join(output_directory, f"extraction_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+    
+    try:
+        with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
+            fieldnames = ['SequenceNo', 'DateTime', 'Barcode1', 'Barcode2', 'OutputPath']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            writer.writeheader()
+            
+            for row in extraction_data:
+                writer.writerow(row)
+        
+        vh.info(f"CSV log written to: {csv_filename}")
+        return csv_filename
+        
+    except Exception as e:
+        vh.error(f"Failed to write CSV log: {str(e)}")
+        logger.exception("Exception writing CSV log")
+        return None
 
 def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ignore", dpi=300, verbose=True):
     """Main processing function.
@@ -315,7 +364,7 @@ def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ig
         return {"error": f"Input file not found: {input_pdf_path}"}
     
     try:
-        results = split_pdf_by_barcodes(input_pdf_path, output_directory, dpi, verbose)
+        results, csv_data = split_pdf_by_barcodes(input_pdf_path, output_directory, dpi, verbose)
         
         # Optionally handle pages without barcodes
         with pikepdf.open(input_pdf_path) as pdf_document:
@@ -355,6 +404,15 @@ def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ig
                         new_pdf.save(output_path)
                         results[("NO_BARCODE", "NO_BARCODE")] = no_barcode_pages
                         vh.info(f"  Created no_barcode.pdf with {len(no_barcode_pages)} pages")
+                        
+                        # Add to CSV data
+                        csv_data.append({
+                            'SequenceNo': len(csv_data) + 1,
+                            'DateTime': datetime.now().strftime('%Y%m%d %H%M%S'),
+                            'Barcode1': '',
+                            'Barcode2': '',
+                            'OutputPath': output_path
+                        })
                     except Exception as e:
                         vh.error(f"Failed to create PDF for pages without barcodes: {str(e)}")
                         logger.exception("Exception creating PDF for pages without barcodes")
@@ -477,6 +535,11 @@ def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ig
                             vh.error(f"Failed to update PDF for barcodes {barcode_tuple}: {str(e)}")
                             logger.exception(f"Exception updating PDF for barcodes {barcode_tuple}")
         
+        # Write CSV log if there's any data to write
+        csv_file_path = None
+        if csv_data:
+            csv_file_path = write_csv_log(output_directory, csv_data, verbose)
+        
         # Prepare results in a format suitable for return
         processed_results = {}
         for barcode_tuple, pages in results.items():
@@ -494,6 +557,7 @@ def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ig
             "output_directory": output_directory,
             "barcode_count": len(results),
             "no_barcode_pages": len(no_barcode_pages),
+            "csv_log_file": csv_file_path,
             "results": processed_results
         }
     except Exception as e:
