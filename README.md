@@ -241,6 +241,9 @@ To compile Barkus for Windows 11 distribution:
 ```bash
 # Create venv
 python -m venv venv
+
+# Activate venv
+.\venv\Scripts\Activate
 ```
 
 ```bash
