@@ -239,16 +239,25 @@ If you're upgrading from a previous version that used pyzbar:
 To compile Barkus for Windows 11 distribution:
 
 ```bash
+# Create venv
+python -m venv venv
+```
+
+```bash
 # Install dependencies
 pip install -r requirements.txt
 
 # Install PyInstaller
 pip install pyinstaller
 
-# Create standalone executable
-pyinstaller --onefile --add-data "requirements.txt;." barkus.py
+# Find path to zxingcpp executable
+python -c "import zxingcpp; print(zxingcpp.__file__)"
+
+# Create standalone executable (replace C:\path\to\ with the actual path from your python -c command.)
+pyinstaller --onefile --add-data "requirements.txt;." --paths "C:\Poppler\bin" --add-binary
+  "C:\path\to\zxingcpp.cp311-win_amd64.pyd;." barkus.py
 
 # The compiled .exe will be in the dist/ directory
 ```
 
-**Note**: Ensure Poppler binaries are available on the target Windows 11 system, either in PATH or bundled with your distribution.
+**Note**: Ensure Poppler binaries are available on the target Windows 11 system. Install it from [here](https://github.com/oschwartz10612/poppler-windows) and extract the files into `C:\Poppler`. Ensure that the `Library` and `share` folders are inside the `Poppler` directory.

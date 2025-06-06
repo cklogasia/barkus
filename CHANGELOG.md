@@ -1,5 +1,8 @@
 # Barkus - Splits collated PDF DOs into individual DOs via barcode
 
+## Version 0.2.0 - 6 June 2025
+- @mingxxv, by the grace of God, implemented full `pyinstaller` compatibility, allowing for deployment to Windows systems
+
 ## Version 0.1.3 - 28 May 2025
 - @mingxxv implemented CSV summary file generation functionality
 
