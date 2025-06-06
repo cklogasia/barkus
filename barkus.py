@@ -22,7 +22,7 @@ import pikepdf
 import cv2
 import numpy as np
 from pdf2image import convert_from_path
-from pyzbar.pyzbar import decode
+import zxingcpp
 from collections import defaultdict
 import logging
 import csv
@@ -89,7 +89,7 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
                     img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
                     
                     # Detect barcodes
-                    detected_barcodes = decode(img_cv)
+                    detected_barcodes = zxingcpp.read_barcodes(img_cv)
                     
                     if detected_barcodes:
                         barcode_info = {
@@ -100,7 +100,7 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
                         # We need to identify which barcode is which (delivery_number or customer_name)
                         if len(detected_barcodes) >= 2:
                             # Extract all barcode strings
-                            barcode_strings = [bc.data.decode('utf-8') for bc in detected_barcodes]
+                            barcode_strings = [bc.text for bc in detected_barcodes]
 
                             # Identify which barcode is on the left (customer_name) and which is on the right (delivery_number)
                             # Sort barcodes by horizontal position (x-coordinate)
@@ -109,7 +109,7 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
                             right_barcodes = []
 
                             # First pass: detect range of horizontal positions
-                            x_positions = [bc.rect.left for bc in detected_barcodes]
+                            x_positions = [bc.position.top_left.x for bc in detected_barcodes]
                             min_x = min(x_positions)
                             max_x = max(x_positions)
                             x_range = max_x - min_x
@@ -119,7 +119,7 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
                             threshold = min_x + (x_range * 0.4)
 
                             for bc in detected_barcodes:
-                                if bc.rect.left < threshold:
+                                if bc.position.top_left.x < threshold:
                                     left_barcodes.append(bc)
                                 else:
                                     right_barcodes.append(bc)
@@ -132,16 +132,16 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
 
                             # Take the first barcode from each side
                             if left_barcodes:
-                                barcode_info['customer_name'] = left_barcodes[0].data.decode('utf-8')
+                                barcode_info['customer_name'] = left_barcodes[0].text
                                 if len(left_barcodes) > 1:
-                                    extra_left = [bc.data.decode('utf-8') for bc in left_barcodes[1:]]
+                                    extra_left = [bc.text for bc in left_barcodes[1:]]
                                     vh.warning(f"  Multiple left-side barcodes found, using first one: {barcode_info['customer_name']}")
                                     vh.warning(f"  Unused left-side barcodes: {', '.join(extra_left)}")
 
                             if right_barcodes:
-                                barcode_info['delivery_number'] = right_barcodes[0].data.decode('utf-8')
+                                barcode_info['delivery_number'] = right_barcodes[0].text
                                 if len(right_barcodes) > 1:
-                                    extra_right = [bc.data.decode('utf-8') for bc in right_barcodes[1:]]
+                                    extra_right = [bc.text for bc in right_barcodes[1:]]
                                     vh.warning(f"  Multiple right-side barcodes found, using first one: {barcode_info['delivery_number']}")
                                     vh.warning(f"  Unused right-side barcodes: {', '.join(extra_right)}")
 
@@ -151,7 +151,7 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
                         
                         elif len(detected_barcodes) == 1:
                             # Only one barcode found - determine if it's on the left or right side
-                            barcode_data = detected_barcodes[0].data.decode('utf-8')
+                            barcode_data = detected_barcodes[0].text
                             bc = detected_barcodes[0]
 
                             # Check the position relative to the page width to decide if it's left or right
@@ -159,7 +159,7 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
                             img_width = img_cv.shape[1]
 
                             # If barcode is in the left half of the page, it's customer name
-                            if bc.rect.left < (img_width / 2):
+                            if bc.position.top_left.x < (img_width / 2):
                                 barcode_info['customer_name'] = barcode_data
                                 vh.warning(f"  Only one barcode found on page {page_num+1} (left side): {barcode_data}")
                                 vh.warning(f"  Treating as Customer Name. No Delivery Number found.")
