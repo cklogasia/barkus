@@ -2,6 +2,8 @@
 
 A Python utility that analyzes PDF documents to detect delivery number and customer name barcodes on each page, and splits the PDF into separate files based on these barcode values.
 
+For the IIP deployment version, please refer to the branch `mingxxv/refactor_win11`.
+
 ## Features
 
 - Detects both delivery number and customer name barcodes on each page of a PDF document
