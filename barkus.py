@@ -38,36 +38,177 @@ logger = logging.getLogger('barkus')
 
 # Class to handle verbosity for both console and log output
 class VerbosityHandler:
-    def __init__(self, verbose=True):
+    def __init__(self, verbose=True, log_file=None):
         self.verbose = verbose
+        self.log_file = log_file
+        self.log_file_handle = None
+        
+        if self.log_file:
+            try:
+                self.log_file_handle = open(self.log_file, 'a', encoding='utf-8')
+            except Exception as e:
+                print(f"Warning: Could not open log file {self.log_file}: {e}", file=sys.stderr)
+                
+    def _write_to_log_file(self, message):
+        if self.log_file_handle:
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self.log_file_handle.write(f"[{timestamp}] {message}\n")
+            self.log_file_handle.flush()
         
     def info(self, message):
         logger.info(message)
+        self._write_to_log_file(f"INFO: {message}")
         if self.verbose:
             print(message)
             
     def warning(self, message):
         logger.warning(message)
+        self._write_to_log_file(f"WARNING: {message}")
         if self.verbose:
             print(f"Warning: {message}")
     
     def error(self, message):
         logger.error(message)
+        self._write_to_log_file(f"ERROR: {message}")
         print(f"Error: {message}", file=sys.stderr)
+        
+    def close(self):
+        if self.log_file_handle:
+            self.log_file_handle.close()
+            self.log_file_handle = None
 
-def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
+def is_delivery_number(barcode_text):
+    """Check if a barcode text represents a delivery number.
+    
+    Delivery numbers start with 'DO' (case insensitive) or with a digit.
+    
+    Args:
+        barcode_text (str): The barcode text to check
+        
+    Returns:
+        bool: True if the text appears to be a delivery number, False otherwise
+    """
+    if not barcode_text:
+        return False
+    
+    text = str(barcode_text).strip().upper()
+    if not text:  # Handle empty strings after stripping
+        return False
+        
+    return text.startswith('DO') or text[0].isdigit()
+
+def extract_barcodes_from_single_page(img_cv, page_num, vh):
+    """Extract barcodes from a single page image.
+    
+    Args:
+        img_cv: OpenCV image of the page
+        page_num (int): Page number (0-based)
+        vh: VerbosityHandler instance
+        
+    Returns:
+        dict: Dictionary with 'delivery_number' and 'customer_name' keys
+    """
+    # Detect barcodes
+    detected_barcodes = zxingcpp.read_barcodes(img_cv)
+    
+    barcode_info = {
+        'delivery_number': None,
+        'customer_name': None
+    }
+    
+    if detected_barcodes:
+        # Extract all barcode strings
+        barcode_strings = [bc.text for bc in detected_barcodes]
+        
+        # Separate barcodes into delivery numbers and customer names based on content
+        delivery_barcodes = []
+        customer_barcodes = []
+        
+        for bc in detected_barcodes:
+            if is_delivery_number(bc.text):
+                delivery_barcodes.append(bc)
+            else:
+                customer_barcodes.append(bc)
+        
+        # Handle delivery numbers
+        if delivery_barcodes:
+            barcode_info['delivery_number'] = delivery_barcodes[0].text
+            if len(delivery_barcodes) > 1:
+                extra_delivery = [bc.text for bc in delivery_barcodes[1:]]
+                vh.warning(f"  Multiple delivery number barcodes found on page {page_num+1}, using first one: {barcode_info['delivery_number']}")
+                vh.warning(f"  Unused delivery number barcodes: {', '.join(extra_delivery)}")
+        
+        # Handle customer names
+        if customer_barcodes:
+            barcode_info['customer_name'] = customer_barcodes[0].text
+            if len(customer_barcodes) > 1:
+                extra_customer = [bc.text for bc in customer_barcodes[1:]]
+                vh.warning(f"  Multiple customer name barcodes found on page {page_num+1}, using first one: {barcode_info['customer_name']}")
+                vh.warning(f"  Unused customer name barcodes: {', '.join(extra_customer)}")
+    
+    return barcode_info
+
+def extract_barcodes_with_retry(img_cv, page_num, vh, max_retries=10):
+    """Extract barcodes with retry logic for missing barcode types.
+    
+    Args:
+        img_cv: OpenCV image of the page
+        page_num (int): Page number (0-based)
+        vh: VerbosityHandler instance
+        max_retries (int): Maximum number of retry attempts
+        
+    Returns:
+        dict: Dictionary with 'delivery_number' and 'customer_name' keys
+    """
+    for attempt in range(max_retries + 1):  # +1 for initial attempt
+        barcode_info = extract_barcodes_from_single_page(img_cv, page_num, vh)
+        
+        # Check if we have both required barcode types
+        has_delivery = barcode_info['delivery_number'] is not None
+        has_customer = barcode_info['customer_name'] is not None
+        
+        if has_delivery and has_customer:
+            # Both found, we're done
+            if attempt > 0:
+                vh.info(f"  Successfully found both barcodes on page {page_num+1} after {attempt} retries")
+            return barcode_info
+        elif attempt < max_retries:
+            # Missing one or both, retry
+            missing = []
+            if not has_delivery:
+                missing.append("delivery number")
+            if not has_customer:
+                missing.append("customer name")
+            
+            vh.warning(f"  Missing {' and '.join(missing)} barcode(s) on page {page_num+1}, retrying... (attempt {attempt+1}/{max_retries})")
+        else:
+            # Final attempt failed
+            missing = []
+            if not has_delivery:
+                missing.append("delivery number")
+            if not has_customer:
+                missing.append("customer name")
+            
+            error_msg = f"Failed to detect {' and '.join(missing)} barcode(s) on page {page_num+1} after {max_retries} retries"
+            vh.error(error_msg)
+            return barcode_info
+    
+    return barcode_info
+
+def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True, log_file=None):
     """Extract delivery number and customer name barcodes from each page of a PDF document.
     
     Args:
         pdf_path (str): Path to the PDF file
         dpi (int): DPI for rendering PDF pages (higher values may improve barcode detection)
         verbose (bool): Whether to display progress information
+        log_file (str): Path to log file for detailed logging
         
     Returns:
         dict: Dictionary mapping page numbers to barcode information containing
               'delivery_number' and 'customer_name' keys
     """
-    vh = VerbosityHandler(verbose)
+    vh = VerbosityHandler(verbose, log_file)
     page_barcodes = {}
     
     try:
@@ -88,88 +229,15 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
                     # Convert PIL Image to OpenCV format
                     img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
                     
-                    # Detect barcodes
-                    detected_barcodes = zxingcpp.read_barcodes(img_cv)
+                    # Use retry logic to extract barcodes
+                    barcode_info = extract_barcodes_with_retry(img_cv, page_num, vh)
                     
-                    if detected_barcodes:
-                        barcode_info = {
-                            'delivery_number': None,
-                            'customer_name': None
-                        }
-                        
-                        # We need to identify which barcode is which (delivery_number or customer_name)
-                        if len(detected_barcodes) >= 2:
-                            # Extract all barcode strings
-                            barcode_strings = [bc.text for bc in detected_barcodes]
-
-                            # Identify which barcode is on the left (customer_name) and which is on the right (delivery_number)
-                            # Sort barcodes by horizontal position (x-coordinate)
-                            # Only consider barcodes that are significantly different in horizontal position
-                            left_barcodes = []
-                            right_barcodes = []
-
-                            # First pass: detect range of horizontal positions
-                            x_positions = [bc.position.top_left.x for bc in detected_barcodes]
-                            min_x = min(x_positions)
-                            max_x = max(x_positions)
-                            x_range = max_x - min_x
-
-                            # Use 40% of the range as a threshold to distinguish left vs right
-                            # This handles cases where there might be multiple barcodes on one side
-                            threshold = min_x + (x_range * 0.4)
-
-                            for bc in detected_barcodes:
-                                if bc.position.top_left.x < threshold:
-                                    left_barcodes.append(bc)
-                                else:
-                                    right_barcodes.append(bc)
-
-                            # Validation
-                            if not left_barcodes:
-                                vh.warning(f"No left-side (customer name) barcodes found on page {page_num+1}")
-                            elif not right_barcodes:
-                                vh.warning(f"No right-side (delivery order) barcodes found on page {page_num+1}")
-
-                            # Take the first barcode from each side
-                            if left_barcodes:
-                                barcode_info['customer_name'] = left_barcodes[0].text
-                                if len(left_barcodes) > 1:
-                                    extra_left = [bc.text for bc in left_barcodes[1:]]
-                                    vh.warning(f"  Multiple left-side barcodes found, using first one: {barcode_info['customer_name']}")
-                                    vh.warning(f"  Unused left-side barcodes: {', '.join(extra_left)}")
-
-                            if right_barcodes:
-                                barcode_info['delivery_number'] = right_barcodes[0].text
-                                if len(right_barcodes) > 1:
-                                    extra_right = [bc.text for bc in right_barcodes[1:]]
-                                    vh.warning(f"  Multiple right-side barcodes found, using first one: {barcode_info['delivery_number']}")
-                                    vh.warning(f"  Unused right-side barcodes: {', '.join(extra_right)}")
-
-                            vh.info(f"  Found barcodes on page {page_num+1}:")
-                            vh.info(f"    Customer Name (left): {barcode_info.get('customer_name', 'UNKNOWN')}")
-                            vh.info(f"    Delivery Number (right): {barcode_info.get('delivery_number', 'UNKNOWN')}")
-                        
-                        elif len(detected_barcodes) == 1:
-                            # Only one barcode found - determine if it's on the left or right side
-                            barcode_data = detected_barcodes[0].text
-                            bc = detected_barcodes[0]
-
-                            # Check the position relative to the page width to decide if it's left or right
-                            # Get image width
-                            img_width = img_cv.shape[1]
-
-                            # If barcode is in the left half of the page, it's customer name
-                            if bc.position.top_left.x < (img_width / 2):
-                                barcode_info['customer_name'] = barcode_data
-                                vh.warning(f"  Only one barcode found on page {page_num+1} (left side): {barcode_data}")
-                                vh.warning(f"  Treating as Customer Name. No Delivery Number found.")
-                            else:
-                                # Right side barcode is delivery number
-                                barcode_info['delivery_number'] = barcode_data
-                                vh.warning(f"  Only one barcode found on page {page_num+1} (right side): {barcode_data}")
-                                vh.warning(f"  Treating as Delivery Number. No Customer Name found.")
-
-                            vh.warning(f"  Expected two barcodes (customer name on left, delivery number on right)")
+                    # Only store if we found at least one barcode
+                    if barcode_info['delivery_number'] is not None or barcode_info['customer_name'] is not None:
+                        # Log what we found
+                        vh.info(f"  Found barcodes on page {page_num+1}:")
+                        vh.info(f"    Delivery Number: {barcode_info.get('delivery_number', 'UNKNOWN')}")
+                        vh.info(f"    Customer Name: {barcode_info.get('customer_name', 'UNKNOWN')}")
                         
                         # Store the barcode information for this page
                         page_barcodes[page_num] = barcode_info
@@ -185,6 +253,8 @@ def extract_barcodes_from_pdf(pdf_path, dpi=300, verbose=True):
         vh.error(f"Failed to process PDF: {str(e)}")
         logger.exception("Exception in extract_barcodes_from_pdf")
         raise
+    finally:
+        vh.close()
     
     return page_barcodes
 
@@ -210,7 +280,7 @@ def group_pages_by_barcode(page_barcodes):
     
     return barcode_pages
 
-def split_pdf_by_barcodes(input_pdf_path, output_dir, dpi=300, verbose=True):
+def split_pdf_by_barcodes(input_pdf_path, output_dir, dpi=300, verbose=True, log_file=None):
     """Split PDF into multiple files based on barcode groups.
     
     Args:
@@ -218,21 +288,41 @@ def split_pdf_by_barcodes(input_pdf_path, output_dir, dpi=300, verbose=True):
         output_dir (str): Directory to save split PDFs
         dpi (int): DPI for rendering PDF pages for barcode detection
         verbose (bool): Whether to display progress information
+        log_file (str): Path to log file for detailed logging
         
     Returns:
         tuple: (barcode_pages dict, extraction_details list)
                barcode_pages: Dictionary mapping (delivery_number, customer_name) tuples to lists of page numbers
                extraction_details: List of dicts with CSV data for each created PDF
     """
-    vh = VerbosityHandler(verbose)
+    vh = VerbosityHandler(verbose, log_file)
     
     try:
         os.makedirs(output_dir, exist_ok=True)
         
         vh.info(f"Reading PDF: {input_pdf_path}")
         
-        page_barcodes = extract_barcodes_from_pdf(input_pdf_path, dpi, verbose)
+        page_barcodes = extract_barcodes_from_pdf(input_pdf_path, dpi, verbose, log_file)
         barcode_pages = group_pages_by_barcode(page_barcodes)
+        
+        # Filter out barcode combinations with None values to prevent invalid PDF generation
+        valid_barcode_pages = {}
+        invalid_pages = []
+        
+        for barcode_tuple, page_numbers in barcode_pages.items():
+            delivery_number, customer_name = barcode_tuple
+            
+            # Skip combinations where either value is None or 'UNKNOWN'
+            if delivery_number in [None, 'UNKNOWN'] or customer_name in [None, 'UNKNOWN']:
+                invalid_pages.extend(page_numbers)
+                vh.error(f"Skipping {len(page_numbers)} pages with incomplete barcode data: Delivery='{delivery_number}', Customer='{customer_name}'")
+                for page_num in page_numbers:
+                    vh.error(f"  Page {page_num+1} has incomplete barcode data and will not be processed")
+            else:
+                valid_barcode_pages[barcode_tuple] = page_numbers
+        
+        # Update barcode_pages to only include valid combinations
+        barcode_pages = valid_barcode_pages
         
         if not barcode_pages:
             vh.warning(f"No barcodes found in {input_pdf_path}")
@@ -311,6 +401,8 @@ def split_pdf_by_barcodes(input_pdf_path, output_dir, dpi=300, verbose=True):
         vh.error(f"Error splitting PDF: {str(e)}")
         logger.exception("Exception in split_pdf_by_barcodes")
         raise
+    finally:
+        vh.close()
     
     return barcode_pages, extraction_details
 
@@ -358,13 +450,17 @@ def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ig
         dpi (int): DPI for rendering PDF pages for barcode detection
         verbose (bool): Whether to display progress information
     """
-    vh = VerbosityHandler(verbose)
+    # Create log file in output directory
+    os.makedirs(output_directory, exist_ok=True)
+    log_file = os.path.join(output_directory, f"barkus_detailed_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    
+    vh = VerbosityHandler(verbose, log_file)
     
     if not os.path.exists(input_pdf_path):
         return {"error": f"Input file not found: {input_pdf_path}"}
     
     try:
-        results, csv_data = split_pdf_by_barcodes(input_pdf_path, output_directory, dpi, verbose)
+        results, csv_data = split_pdf_by_barcodes(input_pdf_path, output_directory, dpi, verbose, log_file)
         
         # Optionally handle pages without barcodes
         with pikepdf.open(input_pdf_path) as pdf_document:
@@ -558,11 +654,14 @@ def process_pdf(input_pdf_path, output_directory="output", handle_no_barcode="ig
             "barcode_count": len(results),
             "no_barcode_pages": len(no_barcode_pages),
             "csv_log_file": csv_file_path,
+            "detailed_log_file": log_file,
             "results": processed_results
         }
     except Exception as e:
         logger.exception("Exception in process_pdf")
         return {"error": str(e)}
+    finally:
+        vh.close()
 
 def main():
     import argparse

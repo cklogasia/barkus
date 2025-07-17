@@ -141,3 +141,7 @@ cython_debug/
 # PDFs and mockups
 *.pdf
 split/
+
+# Output
+output/
+output_modular/
