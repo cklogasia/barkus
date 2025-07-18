@@ -1,9 +1,10 @@
 # Barkus - PDF Barcode Splitter
 
-A Python utility that analyzes PDF documents to detect delivery number and customer name barcodes on each page, and splits the PDF into separate files based on these barcode values.
+A modular Python utility that analyzes PDF documents to detect delivery number and customer name barcodes on each page, and splits the PDF into separate files based on these barcode values.
 
 ## Features
 
+- **Modular Architecture**: Clean separation of concerns with dedicated modules
 - Detects both delivery number and customer name barcodes on each page of a PDF document
 - Groups pages with identical delivery number and customer name combinations
 - Splits the PDF into separate files based on these barcode combinations
@@ -12,6 +13,7 @@ A Python utility that analyzes PDF documents to detect delivery number and custo
 - **Generates CSV log files** with detailed extraction information for each run
 - **Windows 11 compatible** with zxing-cpp for superior barcode detection
 - **Cross-platform support** for Windows, Linux, and macOS
+- **Comprehensive logging** with configurable verbosity levels
 
 ## Installation
 
@@ -83,7 +85,39 @@ brew install poppler
 ## Usage
 
 ```bash
-python barkus.py input.pdf --output-dir output
+python barkus_main.py input.pdf --output-dir output
+```
+
+### Basic Usage
+
+```bash
+# Process a PDF with default settings
+python barkus_main.py document.pdf
+
+# Specify output directory
+python barkus_main.py document.pdf --output-dir results
+
+# Adjust DPI for better barcode detection
+python barkus_main.py document.pdf --dpi 600
+
+# Handle pages without barcodes
+python barkus_main.py document.pdf --handle-no-barcode sequential
+
+# Quiet mode with custom log file
+python barkus_main.py document.pdf --quiet --log-file processing.log
+```
+
+### Information Commands
+
+```bash
+# Show application information
+python barkus_main.py --info
+
+# Estimate processing time
+python barkus_main.py document.pdf --estimate
+
+# Show help
+python barkus_main.py --help
 ```
 
 ### Options
@@ -148,13 +182,37 @@ This mode is particularly useful for multi-page documents where some pages natur
 ### Using Logging
 
 ```bash
-python barkus.py invoice.pdf --log-file barkus.log --debug
+python barkus_main.py invoice.pdf --log-file barkus.log --debug
 ```
 
 This will:
 1. Process the PDF normally
 2. Write detailed logs to barkus.log
 3. Enable debug-level logging for more detailed information
+
+## Architecture
+
+Barkus uses a modular architecture with clean separation of concerns:
+
+### Module Structure
+
+```
+barkus_modules/
+├── __init__.py              # Package initialization
+├── application.py           # Main application orchestration
+├── barcode_detector.py      # Barcode detection and classification
+├── file_operations.py       # File I/O operations
+├── logging_handler.py       # Logging configuration and management
+└── pdf_processor.py         # PDF processing and splitting
+```
+
+### Key Components
+
+- **`application.py`**: Main application class that coordinates all operations
+- **`barcode_detector.py`**: Handles barcode detection using zxing-cpp
+- **`pdf_processor.py`**: Manages PDF manipulation and splitting
+- **`file_operations.py`**: Handles file system operations
+- **`logging_handler.py`**: Manages logging configuration and verbosity
 
 ### Test Data Generation
 
@@ -167,7 +225,7 @@ python test.py
 After generating the test data, you can run:
 
 ```bash
-python barkus.py test_data/test_barcodes.pdf --output-dir test_output
+python barkus_main.py test_data/test_barcodes.pdf --output-dir test_output
 ```
 
 ## Testing the Installation
