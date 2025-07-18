@@ -1,5 +1,12 @@
 # Barkus - Splits collated PDF DOs into individual DOs via barcode
 
+## Version 0.2.1 (in new branch mingxxv/refactor_win11_mod) - 18 July 2025
+- @mingxxv removed legacy code and rewrote the README to reflect it
+- @mingxxv rewrote full core functionality and implemented better logging abilities
+
+## Version 0.2.1 (in new branch mingxxv/refactor_win11_mod) - 17 July 2025
+- @mingxxv modularized codebase and added additional error checking and scanning attempts
+
 ## Version 0.2.0 - 6 June 2025
 - @mingxxv, by the grace of God, implemented full `pyinstaller` compatibility, allowing for deployment to Windows systems
 
