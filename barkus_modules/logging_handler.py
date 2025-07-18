@@ -52,6 +52,19 @@ class VerbosityHandler:
             self.log_file_handle.write(f"[{timestamp}] {message}\n")
             self.log_file_handle.flush()
     
+    def debug(self, message: str) -> None:
+        """
+        Log a debug message.
+        
+        Args:
+            message (str): The debug message to log
+        """
+        logger = logging.getLogger('barkus')
+        logger.debug(message)
+        self._write_to_log_file(f"DEBUG: {message}")
+        if self.verbose:
+            print(f"Debug: {message}")
+    
     def info(self, message: str) -> None:
         """
         Log an info message.

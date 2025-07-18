@@ -58,18 +58,18 @@ class BarkusApplication:
         
         try:
             # Step 1: Split PDF by barcodes
-            barcode_pages, csv_data = self.pdf_processor.split_pdf_by_barcodes(
+            barcode_pages, csv_data, no_barcode_pages = self.pdf_processor.split_pdf_by_barcodes(
                 input_pdf_path, output_directory, dpi, verbose, log_file
             )
             
             # Step 2: Handle pages without barcodes if requested
             if handle_no_barcode != "ignore":
                 barcode_pages = self.pdf_processor.handle_pages_without_barcodes(
-                    input_pdf_path, output_directory, barcode_pages, handle_no_barcode, verbose, log_file
+                    input_pdf_path, output_directory, barcode_pages, no_barcode_pages, handle_no_barcode, verbose, log_file
                 )
             
             # Step 3: Count pages without barcodes
-            no_barcode_pages = self._count_pages_without_barcodes(input_pdf_path, barcode_pages)
+            no_barcode_page_count = len(no_barcode_pages) if handle_no_barcode == "ignore" else 0
             
             # Step 4: Write CSV log if there's data
             csv_file_path = None
@@ -83,7 +83,7 @@ class BarkusApplication:
                 "input_file": input_pdf_path,
                 "output_directory": output_directory,
                 "barcode_count": len(barcode_pages),
-                "no_barcode_pages": no_barcode_pages,
+                "no_barcode_pages": no_barcode_page_count,
                 "csv_log_file": csv_file_path,
                 "detailed_log_file": log_file,
                 "results": processed_results

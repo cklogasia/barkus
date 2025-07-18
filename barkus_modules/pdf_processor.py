@@ -11,7 +11,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from collections import defaultdict
 
 from .logging_handler import VerbosityHandler
-from .barcode_detector import BarcodeDetector
+from .barcode_detector import BarcodeDetector, BarcodeDetectionResult, BarcodeDetectionStatus
 
 
 class PDFProcessor:
@@ -114,7 +114,7 @@ class PDFProcessor:
             logging.getLogger('barkus').exception(f"Exception creating PDF {output_path}")
             return False
     
-    def split_pdf_by_barcodes(self, input_pdf_path: str, output_dir: str, dpi: int = 300, verbose: bool = True, log_file: str = None) -> Tuple[Dict[Tuple[str, str], List[int]], List[Dict[str, Any]]]:
+    def split_pdf_by_barcodes(self, input_pdf_path: str, output_dir: str, dpi: int = 300, verbose: bool = True, log_file: str = None) -> Tuple[Dict[Tuple[str, str], List[int]], List[Dict[str, Any]], Dict[int, BarcodeDetectionResult]]:
         """
         Split PDF into multiple files based on barcode groups.
         
@@ -126,9 +126,10 @@ class PDFProcessor:
             log_file (str): Path to log file for detailed logging
             
         Returns:
-            Tuple[Dict[Tuple[str, str], List[int]], List[Dict[str, Any]]]: 
+            Tuple[Dict[Tuple[str, str], List[int]], List[Dict[str, Any]], Dict[int, BarcodeDetectionResult]]: 
                 - Dictionary mapping barcode tuples to page numbers
                 - List of extraction details for CSV logging
+                - Dictionary mapping page numbers to detection results for pages without barcodes
         """
         vh = VerbosityHandler(verbose, log_file)
         
@@ -139,7 +140,17 @@ class PDFProcessor:
             
             # Extract barcodes from PDF
             page_barcodes = self.barcode_detector.extract_barcodes_from_pdf(input_pdf_path, dpi, verbose, log_file)
-            barcode_pages = self.barcode_detector.group_pages_by_barcode(page_barcodes)
+            barcode_pages, no_barcode_pages = self.barcode_detector.group_pages_by_barcode(page_barcodes)
+            
+            # Print detection statistics
+            stats = self.barcode_detector.get_detection_statistics(page_barcodes)
+            vh.info(f"Detection Statistics:")
+            vh.info(f"  Total pages: {stats['total_pages']}")
+            vh.info(f"  Pages with barcodes: {stats['pages_with_barcodes']}")
+            vh.info(f"  Pages with complete barcodes: {stats['pages_complete_barcodes']}")
+            vh.info(f"  Pages with no patterns: {stats['pages_no_patterns']}")
+            vh.info(f"  Pages with unreadable patterns: {stats['pages_unreadable_patterns']}")
+            vh.info(f"  Pages with corrupted patterns: {stats['pages_corrupted_patterns']}")
             
             # Filter out invalid barcode combinations
             valid_barcode_pages, invalid_pages = self._filter_valid_barcodes(barcode_pages, vh)
@@ -147,7 +158,7 @@ class PDFProcessor:
             
             if not barcode_pages:
                 vh.warning(f"No valid barcodes found in {input_pdf_path}")
-                return {}, []
+                return {}, [], no_barcode_pages
             
             vh.info(f"Found {len(barcode_pages)} unique valid barcode combinations. Creating output PDFs...")
             
@@ -196,10 +207,11 @@ class PDFProcessor:
         finally:
             vh.close()
         
-        return barcode_pages, extraction_details
+        return barcode_pages, extraction_details, no_barcode_pages
     
     def handle_pages_without_barcodes(self, input_pdf_path: str, output_dir: str, barcode_pages: Dict[Tuple[str, str], List[int]], 
-                                    handle_mode: str, verbose: bool = True, log_file: str = None) -> Dict[Tuple[str, str], List[int]]:
+                                    no_barcode_pages: Dict[int, BarcodeDetectionResult], handle_mode: str, 
+                                    verbose: bool = True, log_file: str = None) -> Dict[Tuple[str, str], List[int]]:
         """
         Handle pages without barcodes based on the specified mode.
         
@@ -207,6 +219,7 @@ class PDFProcessor:
             input_pdf_path (str): Path to the input PDF file
             output_dir (str): Directory to save split PDFs
             barcode_pages (Dict[Tuple[str, str], List[int]]): Current barcode pages mapping
+            no_barcode_pages (Dict[int, BarcodeDetectionResult]): Pages without barcodes and their detection results
             handle_mode (str): How to handle pages without barcodes
             verbose (bool): Whether to display progress information
             log_file (str): Path to log file for detailed logging
@@ -219,29 +232,35 @@ class PDFProcessor:
         try:
             with pikepdf.open(input_pdf_path) as pdf_document:
                 total_pages = len(pdf_document.pages)
-                no_barcode_pages = []
-                
-                # Find pages without barcodes
-                for page_num in range(total_pages):
-                    found = False
-                    for pages in barcode_pages.values():
-                        if page_num in pages:
-                            found = True
-                            break
-                    
-                    if not found:
-                        no_barcode_pages.append(page_num)
                 
                 if no_barcode_pages:
-                    vh.info(f"Found {len(no_barcode_pages)} pages without barcodes.")
+                    # Categorize pages without barcodes by their detection status
+                    truly_empty_pages = []
+                    unreadable_pages = []
+                    corrupted_pages = []
+                    
+                    for page_num, result in no_barcode_pages.items():
+                        if result.detection_status == BarcodeDetectionStatus.NO_PATTERNS_FOUND:
+                            truly_empty_pages.append(page_num)
+                        elif result.detection_status == BarcodeDetectionStatus.PATTERNS_UNREADABLE:
+                            unreadable_pages.append(page_num)
+                        else:
+                            corrupted_pages.append(page_num)
+                    
+                    vh.info(f"Found {len(no_barcode_pages)} pages without barcodes:")
+                    vh.info(f"  Truly empty pages (no patterns): {len(truly_empty_pages)}")
+                    vh.info(f"  Unreadable barcode patterns: {len(unreadable_pages)}")
+                    vh.info(f"  Corrupted/error pages: {len(corrupted_pages)}")
+                    
+                    all_no_barcode_page_nums = list(no_barcode_pages.keys())
                     
                     if handle_mode == "separate":
-                        self._create_separate_pdf_for_no_barcodes(pdf_document, no_barcode_pages, output_dir, vh)
-                        barcode_pages[("NO_BARCODE", "NO_BARCODE")] = no_barcode_pages
+                        self._create_separate_pdf_for_no_barcodes(pdf_document, all_no_barcode_page_nums, output_dir, vh)
+                        barcode_pages[("NO_BARCODE", "NO_BARCODE")] = all_no_barcode_page_nums
                     elif handle_mode == "keep_with_previous":
-                        barcode_pages = self._assign_to_previous_barcode(barcode_pages, no_barcode_pages, total_pages, vh)
+                        barcode_pages = self._assign_to_previous_barcode(barcode_pages, all_no_barcode_page_nums, total_pages, vh)
                     elif handle_mode == "sequential":
-                        barcode_pages = self._assign_sequentially(barcode_pages, no_barcode_pages, total_pages, vh)
+                        barcode_pages = self._assign_sequentially_enhanced(barcode_pages, no_barcode_pages, total_pages, vh)
                         # Recreate PDFs with updated assignments
                         self._recreate_pdfs_with_updated_pages(pdf_document, barcode_pages, output_dir, vh)
         
@@ -332,6 +351,78 @@ class PDFProcessor:
         
         return barcode_pages
     
+    def _assign_sequentially_enhanced(self, barcode_pages: Dict[Tuple[str, str], List[int]], 
+                                    no_barcode_pages: Dict[int, BarcodeDetectionResult], 
+                                    total_pages: int, vh: VerbosityHandler) -> Dict[Tuple[str, str], List[int]]:
+        """Enhanced sequential assignment with proper barcode detection status handling."""
+        vh.info("Using enhanced sequential mode: pages with no barcode will be appended to the previous PDF until a new barcode is found")
+        
+        # Create a mapping of page number to barcode tuple
+        page_to_barcode = {}
+        for barcode_tuple, pages in barcode_pages.items():
+            for page_num in pages:
+                page_to_barcode[page_num] = barcode_tuple
+        
+        # Process pages sequentially - this is the corrected logic
+        current_barcode_group = None
+        reassignments = {}
+        
+        for page_num in range(total_pages):
+            # Check if this page has a barcode
+            if page_num in page_to_barcode:
+                # NEW BARCODE FOUND - update current group
+                current_barcode_group = page_to_barcode[page_num]
+                vh.debug(f"  Page {page_num+1}: Found new barcode group {current_barcode_group}")
+                
+            elif page_num in no_barcode_pages:
+                # NO BARCODE ON THIS PAGE
+                result = no_barcode_pages[page_num]
+                
+                if current_barcode_group is not None:
+                    # Assign to the current barcode group
+                    barcode_pages[current_barcode_group].append(page_num)
+                    if current_barcode_group not in reassignments:
+                        reassignments[current_barcode_group] = []
+                    reassignments[current_barcode_group].append(page_num)
+                    
+                    # Log the reason for assignment
+                    if result.detection_status == BarcodeDetectionStatus.NO_PATTERNS_FOUND:
+                        vh.debug(f"  Page {page_num+1}: No barcode patterns found, appending to current group")
+                    elif result.detection_status == BarcodeDetectionStatus.PATTERNS_UNREADABLE:
+                        vh.warning(f"  Page {page_num+1}: Unreadable barcode patterns, appending to current group")
+                    else:
+                        vh.warning(f"  Page {page_num+1}: {result.detection_status.value}, appending to current group")
+                else:
+                    # No previous barcode group to assign to
+                    vh.warning(f"  Page {page_num+1}: No barcode found and no previous group to assign to")
+        
+        # Log reassignments with detailed information
+        for barcode_tuple, pages in reassignments.items():
+            delivery_num, customer_name = barcode_tuple
+            barcode_info = f"Delivery: {delivery_num}"
+            if customer_name != 'UNKNOWN':
+                barcode_info += f", Customer: {customer_name}"
+            
+            # Count different types of pages assigned
+            truly_empty = 0
+            unreadable = 0
+            corrupted = 0
+            
+            for page_num in pages:
+                if page_num in no_barcode_pages:
+                    result = no_barcode_pages[page_num]
+                    if result.detection_status == BarcodeDetectionStatus.NO_PATTERNS_FOUND:
+                        truly_empty += 1
+                    elif result.detection_status == BarcodeDetectionStatus.PATTERNS_UNREADABLE:
+                        unreadable += 1
+                    else:
+                        corrupted += 1
+            
+            assignment_details = f"empty: {truly_empty}, unreadable: {unreadable}, corrupted: {corrupted}"
+            vh.info(f"  Sequentially assigned {len(pages)} pages to '{barcode_info}' ({assignment_details})")
+        
+        return barcode_pages
+    
     def _recreate_pdfs_with_updated_pages(self, pdf_document: pikepdf.Pdf, barcode_pages: Dict[Tuple[str, str], List[int]], 
                                         output_dir: str, vh: VerbosityHandler) -> None:
         """Recreate PDFs with updated page assignments."""
@@ -351,4 +442,7 @@ class PDFProcessor:
             vh.info(f"  Recreating PDF with updated pages: {output_path}")
             vh.info(f"    Barcode info: {barcode_info}")
             
-            self._create_pdf_from_pages(pdf_document, page_numbers, output_path, vh)
+            if self._create_pdf_from_pages(pdf_document, page_numbers, output_path, vh):
+                vh.info(f"  Successfully recreated PDF: {output_path}")
+            else:
+                vh.error(f"  Failed to recreate PDF: {output_path}")
