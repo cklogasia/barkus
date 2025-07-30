@@ -209,10 +209,33 @@ barkus_modules/
 ### Key Components
 
 - **`application.py`**: Main application class that coordinates all operations
-- **`barcode_detector.py`**: Handles barcode detection using zxing-cpp
+- **`barcode_detector.py`**: Handles barcode detection using zxing-cpp with intelligent retry mechanism
 - **`pdf_processor.py`**: Manages PDF manipulation and splitting
 - **`file_operations.py`**: Handles file system operations
 - **`logging_handler.py`**: Manages logging configuration and verbosity
+
+### Intelligent Barcode Detection Retry System
+
+Barkus includes a robust retry mechanism to maximize barcode detection success rates:
+
+**How it works:**
+1. **Initial attempt**: Tries to detect barcodes on the original image
+2. **Enhanced retry strategy**: If the first attempt fails, systematically applies image enhancements:
+   - **Level 1 Enhancement** (contrast adjustment): 5 attempts
+   - **Level 2 Enhancement** (contrast + noise reduction): 5 attempts  
+   - **Level 3 Enhancement** (contrast + noise reduction + morphological cleanup): 5 attempts
+3. **Total attempts**: Up to 16 attempts per page (1 original + 15 enhanced)
+4. **Success criteria**: Stops immediately when both delivery number and customer name barcodes are found
+5. **Error logging**: Only logs as error after all retry attempts are exhausted
+
+**Benefits:**
+- Handles faint, damaged, or low-quality barcodes that might be missed on first attempt
+- Automatically adjusts image properties to improve barcode visibility
+- Maximizes extraction success rate without manual intervention
+- Provides detailed logging of retry attempts for troubleshooting
+
+**Configuration:**
+The retry system is automatically enabled and uses sensible defaults. The maximum retry count can be adjusted by modifying the `BarcodeDetector` initialization in the code if needed.
 
 ### Test Data Generation
 

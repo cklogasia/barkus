@@ -95,12 +95,13 @@ class BarcodeDetector:
     missing barcodes.
     """
     
-    def __init__(self, max_retries: int = 10):
+    def __init__(self, max_retries: int = 15):
         """
         Initialize the barcode detector.
         
         Args:
             max_retries (int): Maximum number of retry attempts for missing barcodes
+                              (should be at least 15 to allow 3 enhancement levels × 5 attempts each)
         """
         self.max_retries = max_retries
         self.classifier = BarcodeClassifier()
@@ -329,6 +330,8 @@ class BarcodeDetector:
     def _detect_with_retry(self, img_cv: np.ndarray, page_num: int, vh: VerbosityHandler) -> BarcodeDetectionResult:
         """
         Extract barcodes with intelligent retry logic based on detection status.
+        For every page that fails on first try, repeat with multiple enhancements,
+        each one 5 times, until detection succeeds.
         
         Args:
             img_cv (np.ndarray): OpenCV image of the page
@@ -339,45 +342,59 @@ class BarcodeDetector:
             BarcodeDetectionResult: Final detection result with retry information
         """
         best_result = None
+        total_attempts = 0
         
-        for attempt in range(self.max_retries + 1):  # +1 for initial attempt
-            # Apply progressive image enhancement
-            enhanced_img = self._apply_image_enhancements(img_cv, attempt)
-            
-            result = self._detect_barcodes_from_image(enhanced_img, page_num, vh)
-            result.retry_count = attempt
-            
-            # Keep track of the best result so far
-            if best_result is None or self._is_better_result(result, best_result):
-                best_result = result
-            
-            # Success criteria: both barcodes found or only retryable failures
-            if result.has_complete_barcodes():
-                if attempt > 0:
-                    vh.info(f"  Successfully found both barcodes on page {page_num+1} after {attempt} retries")
-                return result
-            
-            # Don't retry if we found no patterns (likely truly empty page)
-            if result.detection_status == BarcodeDetectionStatus.NO_PATTERNS_FOUND:
-                vh.debug(f"  Page {page_num+1}: No barcode patterns found, skipping retries")
-                break
-            
-            # Only retry for cases where we might improve with enhancement
-            if attempt < self.max_retries and result.needs_retry():
-                missing = []
-                if result.delivery_number is None:
-                    missing.append("delivery number")
-                if result.customer_name is None:
-                    missing.append("customer name")
+        # First attempt with original image
+        result = self._detect_barcodes_from_image(img_cv, page_num, vh)
+        result.retry_count = total_attempts
+        best_result = result
+        total_attempts += 1
+        
+        # If successful on first try, return immediately
+        if result.has_complete_barcodes():
+            return result
+        
+        # If first attempt failed, try each enhancement level 5 times
+        for enhancement_level in range(1, 4):  # Enhancement levels 1, 2, 3
+            for attempt in range(5):  # 5 attempts per enhancement level
+                # Apply image enhancement
+                enhanced_img = self._apply_image_enhancements(img_cv, enhancement_level)
                 
-                vh.warning(f"  Missing {' and '.join(missing)} barcode(s) on page {page_num+1}, enhancing image and retrying... (attempt {attempt+1}/{self.max_retries})")
-            else:
-                # Either max retries reached or no point in retrying
+                result = self._detect_barcodes_from_image(enhanced_img, page_num, vh)
+                result.retry_count = total_attempts
+                total_attempts += 1
+                
+                # Keep track of the best result so far
+                if self._is_better_result(result, best_result):
+                    best_result = result
+                
+                # Success criteria: both barcodes found
+                if result.has_complete_barcodes():
+                    vh.info(f"  Successfully found both barcodes on page {page_num+1} after {total_attempts-1} retries (enhancement level {enhancement_level})")
+                    return result
+                
+                # Log progress for missing barcodes
+                if total_attempts % 5 == 0:  # Log every 5 attempts
+                    missing = []
+                    if result.delivery_number is None:
+                        missing.append("delivery number")
+                    if result.customer_name is None:
+                        missing.append("customer name")
+                    
+                    if missing:
+                        vh.warning(f"  Missing {' and '.join(missing)} barcode(s) on page {page_num+1}, continuing retries... (attempt {total_attempts}/{self.max_retries})")
+                
+                # Check if we've reached max retries
+                if total_attempts >= self.max_retries:
+                    break
+            
+            # Break out of enhancement loop if max retries reached
+            if total_attempts >= self.max_retries:
                 break
         
-        # Final attempt failed or no more retries warranted
-        if best_result.retry_count >= self.max_retries:
-            best_result.detection_status = BarcodeDetectionStatus.RETRY_EXHAUSTED
+        # All attempts failed
+        best_result.detection_status = BarcodeDetectionStatus.RETRY_EXHAUSTED
+        best_result.retry_count = total_attempts - 1
         
         missing = []
         if best_result.delivery_number is None:
