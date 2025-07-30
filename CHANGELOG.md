@@ -1,5 +1,8 @@
 # Barkus - Splits collated PDF DOs into individual DOs via barcode
 
+## Version 0.2.2 (in new branch mingxxv/refactor_win11_mod) - 30 July 2025
+- @mingxxv fixed barcode detection issue and improved scanning logic
+
 ## Version 0.2.1 (in new branch mingxxv/refactor_win11_mod) - 30 July 2025
 - @mingxxv added claude init file for better AI recognition
 
