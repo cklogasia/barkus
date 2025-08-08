@@ -341,6 +341,9 @@ python -c "import zxingcpp; print(zxingcpp.__file__)"
 pyinstaller --onefile --add-data "requirements.txt;." --paths "C:\Poppler\bin" --add-binary
   "C:\path\to\zxingcpp.cp311-win_amd64.pyd;." barkus.py
 
+# [NEW!] Create executable in directory mode (for faster execution)
+pyinstaller barkus_win.spec
+
 # The compiled .exe will be in the dist/ directory
 ```
 
