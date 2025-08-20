@@ -1,5 +1,8 @@
 # Barkus - Splits collated PDF DOs into individual DOs via barcode
 
+## Version 0.2.4 (in new branch mingxxv/refactor_win11_mod) - 19 August 2025
+- @mingxxv modified .spec file to properly handle Poppler bundling
+
 ## Version 0.2.3 (in new branch mingxxv/refactor_win11_mod) - 8 August 2025
 - @mingxxv added .spec file for Pyinstaller and refactored for directory mode
 

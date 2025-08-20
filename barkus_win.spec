@@ -79,7 +79,20 @@ datas += [('requirements.txt', '.')]
 # Add Poppler binaries (Windows 11 specific path: C:\Poppler)
 poppler_path = 'C:/Poppler/bin'
 if os.path.exists(poppler_path):
-    poppler_files = ['pdftoppm.exe', 'pdftocairo.exe', 'pdfinfo.exe']
+    poppler_files = [
+        'pdftoppm.exe',      # Primary tool for PDF to image conversion (required by pdf2image)
+        'pdftocairo.exe',    # Alternative PDF to image converter
+        'pdfinfo.exe',       # PDF information extractor
+        'pdfimages.exe',     # Image extraction tool
+        'pdfdetach.exe',     # Attachment extraction tool
+        'pdffonts.exe',      # Font information tool
+        'pdftops.exe',       # PDF to PostScript converter
+        'pdftotext.exe',     # Text extraction tool
+        'pdftopng.exe',      # PNG conversion tool
+        'pdftohtml.exe',     # HTML conversion tool
+        'pdfseparate.exe',   # Page separation tool
+        'pdfunite.exe'       # PDF merge tool
+    ]
     for file in poppler_files:
         full_path = os.path.join(poppler_path, file)
         if os.path.exists(full_path):
@@ -97,7 +110,20 @@ fallback_poppler_paths = [
 if not os.path.exists('C:/Poppler/bin'):
     for poppler_path in fallback_poppler_paths:
         if os.path.exists(poppler_path):
-            poppler_files = ['pdftoppm.exe', 'pdftocairo.exe', 'pdfinfo.exe']
+            poppler_files = [
+        'pdftoppm.exe',      # Primary tool for PDF to image conversion (required by pdf2image)
+        'pdftocairo.exe',    # Alternative PDF to image converter
+        'pdfinfo.exe',       # PDF information extractor
+        'pdfimages.exe',     # Image extraction tool
+        'pdfdetach.exe',     # Attachment extraction tool
+        'pdffonts.exe',      # Font information tool
+        'pdftops.exe',       # PDF to PostScript converter
+        'pdftotext.exe',     # Text extraction tool
+        'pdftopng.exe',      # PNG conversion tool
+        'pdftohtml.exe',     # HTML conversion tool
+        'pdfseparate.exe',   # Page separation tool
+        'pdfunite.exe'       # PDF merge tool
+    ]
             for file in poppler_files:
                 full_path = os.path.join(poppler_path, file)
                 if os.path.exists(full_path):

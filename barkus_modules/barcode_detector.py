@@ -106,6 +106,51 @@ class BarcodeDetector:
         self.max_retries = max_retries
         self.classifier = BarcodeClassifier()
     
+    def _get_poppler_path(self) -> Optional[str]:
+        """
+        Get the path to Poppler binaries when running from PyInstaller bundle.
+        
+        Returns:
+            Optional[str]: Path to Poppler binaries if found, None otherwise
+        """
+        import sys
+        import os
+        
+        # Check if running from PyInstaller bundle
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # Running from PyInstaller bundle
+            bundle_dir = sys._MEIPASS
+            poppler_bin_path = os.path.join(bundle_dir, 'poppler', 'bin')
+            
+            if os.path.exists(poppler_bin_path):
+                # Verify that core required executables exist (minimum needed for pdf2image)
+                core_required_exes = ['pdftoppm.exe', 'pdfinfo.exe']
+                # Optional but commonly used executables
+                optional_exes = [
+                    'pdftocairo.exe', 'pdfimages.exe', 'pdfdetach.exe', 'pdffonts.exe',
+                    'pdftops.exe', 'pdftotext.exe', 'pdftopng.exe', 'pdftohtml.exe',
+                    'pdfseparate.exe', 'pdfunite.exe'
+                ]
+                
+                # Check core executables
+                if all(os.path.exists(os.path.join(poppler_bin_path, exe)) for exe in core_required_exes):
+                    # Log which optional executables are available
+                    available_optional = [exe for exe in optional_exes 
+                                        if os.path.exists(os.path.join(poppler_bin_path, exe))]
+                    missing_optional = [exe for exe in optional_exes 
+                                      if not os.path.exists(os.path.join(poppler_bin_path, exe))]
+                    
+                    if missing_optional and hasattr(sys, '_MEIPASS'):
+                        import logging
+                        logger = logging.getLogger('barkus')
+                        logger.warning(f"Some optional Poppler executables are missing from bundle: {', '.join(missing_optional)}")
+                        logger.info(f"Available Poppler executables: {', '.join(core_required_exes + available_optional)}")
+                    
+                    return poppler_bin_path
+        
+        # Not running from bundle or Poppler not found in bundle - let pdf2image use system PATH
+        return None
+    
     def _detect_barcode_patterns(self, img_cv: np.ndarray) -> Tuple[int, List]:
         """
         Detect barcode patterns in an image with enhanced detection.
@@ -436,7 +481,38 @@ class BarcodeDetector:
                 vh.info(f"Processing {total_pages} pages for barcodes...")
                 
                 # Convert PDF to images using pdf2image
-                images = convert_from_path(pdf_path, dpi=dpi)
+                # Detect if running from PyInstaller bundle and set poppler_path accordingly
+                poppler_path = self._get_poppler_path()
+                
+                try:
+                    if poppler_path:
+                        vh.debug(f"Using embedded Poppler binaries from: {poppler_path}")
+                        images = convert_from_path(pdf_path, dpi=dpi, poppler_path=poppler_path)
+                    else:
+                        vh.debug("Using system Poppler binaries from PATH")
+                        images = convert_from_path(pdf_path, dpi=dpi)
+                except Exception as e:
+                    error_msg = str(e)
+                    
+                    # Handle specific Poppler-related errors
+                    if "poppler" in error_msg.lower() or "pdftoppm" in error_msg.lower():
+                        if poppler_path:
+                            vh.error(f"Failed to use embedded Poppler binaries: {error_msg}")
+                            vh.error(f"Embedded Poppler path: {poppler_path}")
+                            vh.info("Attempting fallback to system Poppler...")
+                            try:
+                                images = convert_from_path(pdf_path, dpi=dpi)
+                                vh.info("Successfully fell back to system Poppler binaries")
+                            except Exception as fallback_e:
+                                vh.error(f"Fallback to system Poppler also failed: {str(fallback_e)}")
+                                raise Exception(f"Both embedded and system Poppler failed. Embedded error: {error_msg}. System error: {str(fallback_e)}")
+                        else:
+                            vh.error(f"Poppler executables not found in system PATH: {error_msg}")
+                            vh.error("Please ensure Poppler is installed and accessible, or use the bundled executable version")
+                            raise Exception(f"Poppler not available: {error_msg}")
+                    else:
+                        # Re-raise non-Poppler related errors
+                        raise
                 
                 for page_num, img in enumerate(images):
                     if total_pages > 10 and page_num % 5 == 0:
