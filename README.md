@@ -2,6 +2,8 @@
 
 A modular Python utility that analyzes PDF documents to detect delivery number and customer name barcodes on each page, and splits the PDF into separate files based on these barcode values.
 
+For the IIP deployment version, please refer to the branch `mingxxv/refactor_win11`.
+
 ## Features
 
 - **Modular Architecture**: Clean separation of concerns with dedicated modules
@@ -306,14 +308,6 @@ This version of Barkus has been updated for optimal Windows 11 cross-compilation
 - **Enhanced Performance**: zxing-cpp provides better detection accuracy and performance
 - **Simplified Dependencies**: No longer requires Visual C++ Redistributable packages
 - **Active Maintenance**: zxing-cpp is actively maintained with regular updates
-
-### Migration from pyzbar
-
-If you're upgrading from a previous version that used pyzbar:
-
-1. **Automatic**: Simply install the new requirements - the API changes are handled internally
-2. **Functionality**: All barcode detection behavior remains identical
-3. **Performance**: You may notice improved barcode detection accuracy and speed
 
 ### Compilation for Windows 11
 
