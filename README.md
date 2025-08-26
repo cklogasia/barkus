@@ -16,6 +16,7 @@ For the IIP deployment version, please refer to the branch `mingxxv/refactor_win
 - **Windows 11 compatible** with zxing-cpp for superior barcode detection
 - **Cross-platform support** for Windows, Linux, and macOS
 - **Comprehensive logging** with configurable verbosity levels
+- **Intelligent retry mechanism** with image enhancement for better barcode detection
 
 ## Installation
 
@@ -210,11 +211,21 @@ barkus_modules/
 
 ### Key Components
 
-- **`application.py`**: Main application class that coordinates all operations
-- **`barcode_detector.py`**: Handles barcode detection using zxing-cpp with intelligent retry mechanism
-- **`pdf_processor.py`**: Manages PDF manipulation and splitting
-- **`file_operations.py`**: Handles file system operations
-- **`logging_handler.py`**: Manages logging configuration and verbosity
+- **`application.py`**: Main application class that coordinates all operations and defines the main workflow
+- **`barcode_detector.py`**: Handles barcode detection using zxing-cpp with intelligent retry mechanism and image enhancement
+- **`pdf_processor.py`**: Manages PDF manipulation and splitting using pikepdf library
+- **`file_operations.py`**: Handles file system operations, CSV logging, and filename sanitization
+- **`logging_handler.py`**: Manages logging configuration with VerbosityHandler for consistent logging across modules
+
+### Data Flow
+
+1. `barkus_main.py` captures user input and initializes `BarkusApplication`
+2. `BarkusApplication` orchestrates the processing workflow using `PDFProcessor`
+3. `PDFProcessor` uses `BarcodeDetector` to extract barcode data from each PDF page
+4. `BarcodeDetector` converts PDF pages to images and uses zxing-cpp for barcode detection
+5. Pages are grouped by barcode combinations and split into separate PDFs
+6. `FileOperations` handles CSV logging and file management
+7. All modules use `VerbosityHandler` for consistent logging
 
 ### Intelligent Barcode Detection Retry System
 
@@ -235,9 +246,6 @@ Barkus includes a robust retry mechanism to maximize barcode detection success r
 - Automatically adjusts image properties to improve barcode visibility
 - Maximizes extraction success rate without manual intervention
 - Provides detailed logging of retry attempts for troubleshooting
-
-**Configuration:**
-The retry system is automatically enabled and uses sensible defaults. The maximum retry count can be adjusted by modifying the `BarcodeDetector` initialization in the code if needed.
 
 ### Test Data Generation
 
