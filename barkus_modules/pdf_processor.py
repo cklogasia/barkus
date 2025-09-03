@@ -26,13 +26,14 @@ class PDFProcessor:
         """Initialize the PDF processor."""
         self.barcode_detector = BarcodeDetector()
     
-    def _create_safe_filename(self, delivery_number: str, customer_name: str) -> str:
+    def _create_safe_filename(self, delivery_number: str, customer_name: str, has_error: bool = False) -> str:
         """
         Create a safe filename from delivery number and customer name.
         
         Args:
             delivery_number (str): The delivery number
             customer_name (str): The customer name
+            has_error (bool): Whether there were missing barcodes (adds error tag)
             
         Returns:
             str: A safe filename for the PDF
@@ -43,44 +44,46 @@ class PDFProcessor:
         safe_delivery = ''.join('_' if c in invalid_chars else c for c in str(delivery_number))
         safe_customer = ''.join('_' if c in invalid_chars else c for c in str(customer_name))
         
+        # Add error tag if there are missing barcodes
+        error_tag = "_error" if has_error else ""
+        
         # Use both values in filename if both are available
         # Put customer name first, then delivery number in the filename
         if delivery_number != 'UNKNOWN' and customer_name != 'UNKNOWN':
-            return f"{safe_customer}_{safe_delivery}.pdf"
+            return f"{safe_customer}_{safe_delivery}{error_tag}.pdf"
         elif delivery_number != 'UNKNOWN':
-            return f"{safe_delivery}.pdf"
+            return f"{safe_delivery}{error_tag}.pdf"
         elif customer_name != 'UNKNOWN':
-            return f"{safe_customer}.pdf"
+            return f"{safe_customer}{error_tag}.pdf"
         else:
-            return "unknown_barcode.pdf"
+            return f"unknown_barcode{error_tag}.pdf"
     
     def _filter_valid_barcodes(self, barcode_pages: Dict[Tuple[str, str], List[int]], vh: VerbosityHandler) -> Tuple[Dict[Tuple[str, str], List[int]], List[int]]:
         """
-        Filter out barcode combinations with None values to prevent invalid PDF generation.
+        Process all barcode combinations, including those with missing barcodes.
+        Pages with missing barcodes will be included with error tags in filenames.
         
         Args:
             barcode_pages (Dict[Tuple[str, str], List[int]]): Original barcode pages mapping
             vh (VerbosityHandler): Verbosity handler for logging
             
         Returns:
-            Tuple[Dict[Tuple[str, str], List[int]], List[int]]: Valid barcode pages and invalid pages
+            Tuple[Dict[Tuple[str, str], List[int]], List[int]]: All barcode pages and empty list (no pages excluded)
         """
-        valid_barcode_pages = {}
-        invalid_pages = []
+        processed_barcode_pages = {}
         
         for barcode_tuple, page_numbers in barcode_pages.items():
             delivery_number, customer_name = barcode_tuple
             
-            # Skip combinations where either value is None or 'UNKNOWN'
+            # Include all combinations, even those with missing barcodes
             if delivery_number in [None, 'UNKNOWN'] or customer_name in [None, 'UNKNOWN']:
-                invalid_pages.extend(page_numbers)
-                vh.error(f"Skipping {len(page_numbers)} pages with incomplete barcode data: Delivery='{delivery_number}', Customer='{customer_name}'")
+                vh.warning(f"Including {len(page_numbers)} pages with incomplete barcode data (will be marked with error tag): Delivery='{delivery_number}', Customer='{customer_name}'")
                 for page_num in page_numbers:
-                    vh.error(f"  Page {page_num+1} has incomplete barcode data and will not be processed")
-            else:
-                valid_barcode_pages[barcode_tuple] = page_numbers
+                    vh.warning(f"  Page {page_num+1} has incomplete barcode data and will be marked with error tag")
+            
+            processed_barcode_pages[barcode_tuple] = page_numbers
         
-        return valid_barcode_pages, invalid_pages
+        return processed_barcode_pages, []  # No pages are excluded anymore
     
     def _create_pdf_from_pages(self, pdf_document: pikepdf.Pdf, page_numbers: List[int], output_path: str, vh: VerbosityHandler) -> bool:
         """
@@ -173,8 +176,11 @@ class PDFProcessor:
                 for barcode_tuple, page_numbers in barcode_pages.items():
                     delivery_number, customer_name = barcode_tuple
                     
-                    # Create filename
-                    filename = self._create_safe_filename(delivery_number, customer_name)
+                    # Check if this combination has missing barcodes (error case)
+                    has_error = delivery_number in [None, 'UNKNOWN'] or customer_name in [None, 'UNKNOWN']
+                    
+                    # Create filename with error tag if needed
+                    filename = self._create_safe_filename(delivery_number, customer_name, has_error)
                     output_path = os.path.join(output_dir, filename)
                     
                     # Log which barcode values we're using
@@ -431,7 +437,11 @@ class PDFProcessor:
                 continue
                 
             delivery_number, customer_name = barcode_tuple
-            filename = self._create_safe_filename(delivery_number, customer_name)
+            
+            # Check if this combination has missing barcodes (error case)
+            has_error = delivery_number in [None, 'UNKNOWN'] or customer_name in [None, 'UNKNOWN']
+            
+            filename = self._create_safe_filename(delivery_number, customer_name, has_error)
             output_path = os.path.join(output_dir, filename)
             
             # Log which barcode values we're using
